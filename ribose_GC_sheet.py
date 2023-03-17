@@ -74,11 +74,16 @@ def import_molecule(mol_name, format):
 #import molecules 
 ad_ribose, ad_ribose_top, ad_ribose_conformer = import_molecule('aD-ribopyro.sdf', 'sdf')
 al_ribose, al_ribose_top, al_ribose_conformer = import_molecule('aL-ribopyro.sdf', 'sdf')
+
+d_glycer, d_glycer_top, d_glycer_conformer = import_molecule('D-glyceraldehyde.sdf', 'sdf')
+l_glycer, l_glycer_top, l_glycer_conformer = import_molecule('L-glyceraldehyde.sdf', 'sdf')
+
 guanine, guanine_top, guanine_conformer = import_molecule('guanine.sdf', 'sdf')
 cytosine, cytosine_top, cytosine_conformer = import_molecule('cytosine.sdf', 'sdf')
 
+
 #generate residue template 
-gaff = GAFFTemplateGenerator(molecules = [ad_ribose, al_ribose, guanine, cytosine])
+gaff = GAFFTemplateGenerator(molecules = [ad_ribose, al_ribose, guanine, cytosine, d_glycer, l_glycer])
 #move above and to middle of sheet
 ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'z')
 ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'y')
@@ -100,20 +105,30 @@ GC_start, GC_stop = make_GC_sheet(4,4,g,guanine_top,c,cytosine_top, model)
 (print("Molecules added"))
 
 # add, at random, either an L or D ribose 
-ribose_chirality = []
-for i in range(1):
-    randRibose = rand.choice(['ad_ribose_conformer', 'al_ribose_conformer'])
+mol_added = []
+for i in range(5):
+    randRibose = rand.choice(['ad_ribose_conformer', 'al_ribose_conformer', 'l-glycer', 'd-glycer'])
     if randRibose == 'ad_ribose_conformer':
-        ribose_chirality.append('D')
+        mol_added.append('ad_ribose')
         ad = rotate(ad_ribose_conformer, rand.randrange(0,360), axis = rand.choice(['x','y','z']))
         ad = translate(ad, (i+1)*30, 'x')
         model.add(ad_ribose_top, ad)
     elif randRibose == 'al_ribose_conformer':
-        ribose_chirality.append('L')
+        mol_added.append('al_ribose')
         al = rotate(al_ribose_conformer, rand.randrange(0,10), axis = rand.choice(['x','y','z']))
         al = translate(al, (i+1)*30, 'x')
         model.add(al_ribose_top, al)
-print('Ribose Chirlaity for this simulation is: ' + str(ribose_chirality))
+    elif randRibose == 'l-glcyer':
+        mol_added.append('l-glyceraldehyde')
+        l_gly = rotate(l_glycer_conformer, rand.range(0,360), axis = rand.choice(['x','y','z']))
+        l_gly = translate(l_gly, (i+1)*30, 'x')
+        model.add(l_glycer_top, l_gly)
+    elif randRibose == 'd-glcyer':
+        mol_added.append('d-glyceraldehyde')
+        d_gly = rotate(d_glycer_conformer, rand.range(0,360), axis = rand.choice(['x','y','z']))
+        d_gly = translate(d_gly, (i+1)*30, 'x')
+        model.add(d_glycer_top, d_gly)
+print('Ribose Chirlaity for this simulation is: ' + str(mol_added))
 
 print("Building system")
 forcefield = ForceField('amber14-all.xml', 'implicit/obc2.xml')

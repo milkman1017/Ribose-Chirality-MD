@@ -17,7 +17,7 @@ def translate(mol, step, axis='x'):
         mol += [0,0,step] *angstrom
     return mol 
 
-def rotate(mol, angle, axis = 'x'):
+def rotate(mol, angle, axis='x'):
     com = [np.average(mol[:,0]), np.average(mol[:,1]), np.average(mol[:,2])]
     mol = translate(mol, -com[0], axis = 'x') 
     mol = translate(mol, -com[1], axis = 'y')
@@ -47,21 +47,70 @@ def rotate(mol, angle, axis = 'x'):
     return mol
 
 
-def make_GC_sheet(height, width, g, guanine_top, c, cytosine_top, model):
-    start_model_index = model.topology.getNumAtoms()
-    for i in range(width):
-        for j in range(height):
-            g = translate(g,10,'x')
-            model.add(guanine_top,g)
-            c = translate(c,10,'x')
-            model.add(cytosine_top,c)
-        # move back to start for next row
-        g = translate(g,16,'y')
-        g = translate(g, -10*height,'x')
-        c = translate(c,16,'y')
-        c = translate(c, -10*height, 'x')
-    end_model_index = model.topology.getNumAtoms()
-    return start_model_index, end_model_index
+def make_sheet(height, width, tops, poss, model, step=5):
+    """Creates an evenly spaced sheet of given molecules and attaches it to openmm modeler.
+    Params
+    ======
+    height (int) - dimension in the x direction to build 2d sheet
+    width  (int) - dimension in the y direction to build 2d sheet
+    top    (list)(openmm.topology) - topology object of molecule
+    pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
+    model  (openmm.modeler)
+    (step) (int) - space between each molecule in sheet
+    
+    Returns
+    =======
+    index_coords (list) - (starting index, ending index) of sheet in modeler"""
+    sheet_starting_index = model.topology.getNumAtoms()
+    xspacing = 0
+    spacing = step * len(tops)
+    
+    for j in range(width):
+        for k in range(len(tops)):
+            # x axis
+            pos = translate(poss[k], spacing * xspacing, 'x')
+            model.add(tops[k], pos)
+            for i in range(height):
+                # y axis
+                pos = translate(pos, spacing, 'y')
+                model.add(tops[k], pos)
+            
+            xspacing += 1
+    return [sheet_starting_index, model.topology.getNumAtoms()]
+
+def make_sheet_random(height, width, tops, poss, model, step=5):
+    """Creates an evenly spaced sheet of molecules randomly picked from given list
+        and attaches it to openmm modeler.
+    Gives molecule random rotation.
+    Params
+    ======
+    height (int) - dimension in the x direction to build 2d sheet
+    width  (int) - dimension in the y direction to build 2d sheet
+    top    (list)(openmm.topology) - topology object of molecule
+    pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
+    model  (openmm.modeler)
+    (step) (int) - space between each molecule in sheet
+    
+    Returns
+    =======
+    index_coords (list) - (starting index, ending index) of sheet in modeler"""
+    sheet_starting_index = model.topology.getNumAtoms()
+    # precalculate random variables
+    idx = np.random.choice(np.arange(0, len(tops)), size=height*width)
+    axis_rotation = np.random.choice(['x','y','z'], size=height*width)
+    angle = np.random.randint(0,360,size=height*width)
+
+    for i in range(height):
+        for j in range(width):
+            ij = i+j
+            # x axis
+            pos = rotate(poss[idx[ij]], angle[ij], axis=axis_rotation[ij])
+            pos = translate(pos, step * j, 'y')
+            pos = translate(pos, step * i, 'x')
+            model.add(tops[idx[ij]], pos)
+    return [sheet_starting_index, model.topology.getNumAtoms()]
+
+
 
 def import_molecule(mol_name, format):
     mol = Molecule.from_file(mol_name, format)
@@ -94,41 +143,28 @@ print("Building molecules")
 
 #line up the guanine and cytosines so that the molecules face eachother
 c = rotate(cytosine_conformer, 4.9, axis = 'z') 
-c = translate(c, 8, 'y')
+c = rotate(c, 160, axis='y')
+# c = translate(c, 8, 'y')
 g = rotate(guanine_conformer, 180, axis = 'z')
-model = Modeller(guanine_top, g)
+# initializing the modeler requires a topology and pos
+# we immediately empty the modeler for use later
+model = Modeller(guanine_top, g) 
 model.delete(model.topology.atoms())
 
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
+sheet_indices = []
+sheet_indices.append(make_sheet(4, 4, [guanine_top, cytosine_top], [g, c], model))
 
-GC_start, GC_stop = make_GC_sheet(4,4,g,guanine_top,c,cytosine_top, model)
-(print("Molecules added"))
+# sheet_indices.append(make_sheet(4, 4, guanine_top, g, model))
+# offset the cytosine in the x dim to prevent putting the mols on top of each other
+# c = translate(c, 10, 'y')
+# sheet_indices.append(make_sheet(4, 4, cytosine_top, c, model, step=10))
+print("Molecules added")
 
 # add, at random, either an L or D ribose 
-mol_added = []
-for i in range(5):
-    randRibose = rand.choice(['ad_ribose_conformer', 'al_ribose_conformer', 'l-glycer', 'd-glycer'])
-    if randRibose == 'ad_ribose_conformer':
-        mol_added.append('ad_ribose')
-        ad = rotate(ad_ribose_conformer, rand.randrange(0,360), axis = rand.choice(['x','y','z']))
-        ad = translate(ad, (i+1)*30, 'x')
-        model.add(ad_ribose_top, ad)
-    elif randRibose == 'al_ribose_conformer':
-        mol_added.append('al_ribose')
-        al = rotate(al_ribose_conformer, rand.randrange(0,10), axis = rand.choice(['x','y','z']))
-        al = translate(al, (i+1)*30, 'x')
-        model.add(al_ribose_top, al)
-    elif randRibose == 'l-glcyer':
-        mol_added.append('l-glyceraldehyde')
-        l_gly = rotate(l_glycer_conformer, rand.range(0,360), axis = rand.choice(['x','y','z']))
-        l_gly = translate(l_gly, (i+1)*30, 'x')
-        model.add(l_glycer_top, l_gly)
-    elif randRibose == 'd-glcyer':
-        mol_added.append('d-glyceraldehyde')
-        d_gly = rotate(d_glycer_conformer, rand.range(0,360), axis = rand.choice(['x','y','z']))
-        d_gly = translate(d_gly, (i+1)*30, 'x')
-        model.add(d_glycer_top, d_gly)
-print('Ribose Chirlaity for this simulation is: ' + str(mol_added))
+ad_ribose_conformer = translate(ad_ribose_conformer, 4,'z')
+al_ribose_conformer = translate(al_ribose_conformer, 4,'z')
+make_sheet_random(4, 4, [ad_ribose_top, al_ribose_top], [ad_ribose_conformer, al_ribose_conformer], model, step=10)
 
 print("Building system")
 forcefield = ForceField('amber14-all.xml', 'implicit/obc2.xml')
@@ -145,8 +181,9 @@ restraint.addPerParticleParameter('x0')
 restraint.addPerParticleParameter('y0')
 restraint.addPerParticleParameter('z0')
 
-for i in range(GC_start, GC_stop):
-    restraint.addParticle(i, model.positions[i])
+for start, stop in sheet_indices:
+    for i in range(start, stop):
+        restraint.addParticle(i, model.positions[i])
 
 integrator = LangevinMiddleIntegrator(300*kelvin, 6/picosecond, 0.004*picoseconds)
 model.addExtraParticles(forcefield)

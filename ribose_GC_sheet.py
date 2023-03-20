@@ -14,12 +14,12 @@ def translate(mol, step, axis='x'):
     elif (axis == 'y'):
         mol += [0,step,0] * angstrom
     else:
-        mol += [0,0,step] * angstrom
+        mol += [0,0,step] *angstrom
     return mol 
 
 def rotate(mol, angle, axis='x'):
     com = [np.average(mol[:,0]), np.average(mol[:,1]), np.average(mol[:,2])]
-    mol = translate(mol, -com[0], axis = 'x')
+    mol = translate(mol, -com[0], axis = 'x') 
     mol = translate(mol, -com[1], axis = 'y')
     mol = translate(mol, -com[2], axis = 'z')
     if axis == 'x':
@@ -40,6 +40,7 @@ def rotate(mol, angle, axis='x'):
                       [0,0,1]])
         mol = mol[:,:]@z
         mol = mol * angstrom
+
     mol = translate(mol, com[0], axis = 'x') 
     mol = translate(mol, com[1], axis = 'y')
     mol = translate(mol, com[2], axis = 'z')
@@ -110,41 +111,34 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 
+
+def import_molecule(mol_name, format):
+    mol = Molecule.from_file(mol_name, format)
+    mol_top = mol.to_topology().to_openmm()
+    mol.generate_conformers()
+    mol_con = to_openmm(mol.conformers[0])
+    
+    return mol, mol_top, mol_con
+
 #import molecules 
-ad_ribose = Molecule.from_file('aD-ribopyro.sdf', file_format='sdf')
-al_ribose = Molecule.from_file('aL-ribopyro.sdf', file_format='sdf')
-guanine = Molecule.from_file('guanine.sdf', file_format='sdf')
-cytosine = Molecule.from_file('cytosine.sdf', file_format='sdf')
+ad_ribose, ad_ribose_top, ad_ribose_conformer = import_molecule('aD-ribopyro.sdf', 'sdf')
+al_ribose, al_ribose_top, al_ribose_conformer = import_molecule('aL-ribopyro.sdf', 'sdf')
 
-#get positions and topologies of imported molecuels 
-ad_ribose.generate_conformers()
-ad_ribose_top =ad_ribose.to_topology().to_openmm()
+d_glycer, d_glycer_top, d_glycer_conformer = import_molecule('D-glyceraldehyde.sdf', 'sdf')
+l_glycer, l_glycer_top, l_glycer_conformer = import_molecule('L-glyceraldehyde.sdf', 'sdf')
 
-al_ribose.generate_conformers()
-al_ribose_top = al_ribose.to_topology().to_openmm()
-
-guanine.generate_conformers()
-guanine_top = guanine.to_topology().to_openmm()
-
-cytosine.generate_conformers()
-cytosine_top = cytosine.to_topology().to_openmm()
+guanine, guanine_top, guanine_conformer = import_molecule('guanine.sdf', 'sdf')
+cytosine, cytosine_top, cytosine_conformer = import_molecule('cytosine.sdf', 'sdf')
 
 
 #generate residue template 
-gaff = GAFFTemplateGenerator(molecules = [ad_ribose, al_ribose, guanine, cytosine])
-
-#get the openmm version of the positions 
-ad_ribose_conformer = to_openmm(ad_ribose.conformers[0])
-al_ribose_conformer = to_openmm(al_ribose.conformers[0])
-guanine_conformer = to_openmm(guanine.conformers[0])
-cytosine_conformer = to_openmm(cytosine.conformers[0])
-
+gaff = GAFFTemplateGenerator(molecules = [ad_ribose, al_ribose, guanine, cytosine, d_glycer, l_glycer])
 #move above and to middle of sheet
-ad_ribose_conformer = translate(ad_ribose_conformer, 5, 'z')
-ad_ribose_conformer = translate(ad_ribose_conformer, 30, 'y')
+ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'z')
+ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'y')
 
-al_ribose_conformer = translate(al_ribose_conformer, 5, 'z')
-al_ribose_conformer = translate(al_ribose_conformer, 30, 'y')
+al_ribose_conformer = translate(al_ribose_conformer, 10, 'z')
+al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
 print("Building molecules")
 
 #line up the guanine and cytosines so that the molecules face eachother
@@ -177,6 +171,7 @@ forcefield = ForceField('amber14-all.xml', 'implicit/obc2.xml')
 forcefield.registerTemplateGenerator(gaff.generator)
 # model.addSolvent(forcefield=forcefield, model='tip3p', boxSize = Vec3(10.5, 6, 3)*nanometers)
 system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=1*nanometer, constraints=HBonds)
+
 
 # create position restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
 restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')

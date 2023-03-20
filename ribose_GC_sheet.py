@@ -6,7 +6,6 @@ from openff.toolkit.topology import Molecule
 from openmmforcefields.generators import GAFFTemplateGenerator
 from openff.units.openmm import to_openmm
 import numpy as np
-import random as rand
 
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
@@ -98,7 +97,7 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
     # precalculate random variables
     idx = np.random.choice(np.arange(0, len(tops)), size=height*width)
     axis_rotation = np.random.choice(['x','y','z'], size=height*width)
-    angle = np.random.randint(0,360,size=height*width)
+    angle = np.deg2rad(np.random.randint(0,360,size=height*width))
 
     for i in range(height):
         for j in range(width):
@@ -110,50 +109,52 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
             model.add(tops[idx[ij]], pos)
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-
-
-def import_molecule(mol_name, format):
-    mol = Molecule.from_file(mol_name, format)
-    mol_top = mol.to_topology().to_openmm()
-    mol.generate_conformers()
-    mol_con = to_openmm(mol.conformers[0])
-    
-    return mol, mol_top, mol_con
+def load_mols(filenames):
+    """Loads a molecule from file.
+    Args
+    ====
+    filenames (list) - list of molecule sdf files
+    """
+    mols = {}
+    for name in filenames:
+        mol = Molecule.from_file(name, file_format="sdf")
+        mol.generate_conformers()
+        conf = to_openmm(mol.conformers[0])
+        top = mol.to_topology().to_openmm()
+        mols[name[:-4]] = {
+            "mol":mol,
+            "topology": top,
+            "positions": conf
+        }
+    return mols
 
 #import molecules 
-ad_ribose, ad_ribose_top, ad_ribose_conformer = import_molecule('aD-ribopyro.sdf', 'sdf')
-al_ribose, al_ribose_top, al_ribose_conformer = import_molecule('aL-ribopyro.sdf', 'sdf')
-
-d_glycer, d_glycer_top, d_glycer_conformer = import_molecule('D-glyceraldehyde.sdf', 'sdf')
-l_glycer, l_glycer_top, l_glycer_conformer = import_molecule('L-glyceraldehyde.sdf', 'sdf')
-
-guanine, guanine_top, guanine_conformer = import_molecule('guanine.sdf', 'sdf')
-cytosine, cytosine_top, cytosine_conformer = import_molecule('cytosine.sdf', 'sdf')
-
+mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'D-glyceraldehyde.sdf', 'L-glyceraldehyde.sdf', 'guanine.sdf', 'cytosine.sdf'])
 
 #generate residue template 
-gaff = GAFFTemplateGenerator(molecules = [ad_ribose, al_ribose, guanine, cytosine, d_glycer, l_glycer])
+gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
 #move above and to middle of sheet
-ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'z')
-ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'y')
+ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], 10, 'z')
+# ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'y')
 
-al_ribose_conformer = translate(al_ribose_conformer, 10, 'z')
-al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
+al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], 10, 'z')
+# al_ribose_conformer = translate(al_ribose_conformer, 10, 'y')
 print("Building molecules")
 
 #line up the guanine and cytosines so that the molecules face eachother
-c = rotate(cytosine_conformer, 4.9, axis = 'z') 
-c = rotate(c, 160, axis='y')
+# c = rotate(mols["cytosine"]["positions"], np.deg2rad(180), axis = 'z') 
+c = rotate(mols["cytosine"]["positions"], np.deg2rad(0), axis='y')
+c = rotate(c, np.deg2rad(190), axis='x')
 # c = translate(c, 8, 'y')
-g = rotate(guanine_conformer, 180, axis = 'z')
+g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
 # initializing the modeler requires a topology and pos
 # we immediately empty the modeler for use later
-model = Modeller(guanine_top, g) 
+model = Modeller(mols["guanine"]["topology"], g) 
 model.delete(model.topology.atoms())
 
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
 sheet_indices = []
-sheet_indices.append(make_sheet(4, 4, [guanine_top, cytosine_top], [g, c], model))
+sheet_indices.append(make_sheet(8, 8, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.5))
 
 # sheet_indices.append(make_sheet(4, 4, guanine_top, g, model))
 # offset the cytosine in the x dim to prevent putting the mols on top of each other
@@ -163,8 +164,12 @@ print("Molecules added")
 
 # add, at random, either an L or D ribose 
 ad_ribose_conformer = translate(ad_ribose_conformer, 4,'z')
+ad_ribose_conformer = translate(ad_ribose_conformer, 20, axis='x')
+ad_ribose_conformer = translate(ad_ribose_conformer, 20, axis='y')
 al_ribose_conformer = translate(al_ribose_conformer, 4,'z')
-make_sheet_random(4, 4, [ad_ribose_top, al_ribose_top], [ad_ribose_conformer, al_ribose_conformer], model, step=10)
+al_ribose_conformer = translate(al_ribose_conformer, 20, axis='x')
+al_ribose_conformer = translate(al_ribose_conformer, 20, axis='y')
+make_sheet_random(4, 4, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
 
 print("Building system")
 forcefield = ForceField('amber14-all.xml', 'implicit/obc2.xml')

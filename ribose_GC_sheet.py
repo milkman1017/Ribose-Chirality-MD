@@ -46,7 +46,7 @@ def rotate(mol, angle, axis='x'):
     return mol
 
 
-def make_sheet(height, width, tops, poss, model, step=5):
+def make_sheet(height, width, tops, poss, model, step=5.0):
     """Creates an evenly spaced sheet of given molecules and attaches it to openmm modeler.
     Params
     ======
@@ -55,7 +55,7 @@ def make_sheet(height, width, tops, poss, model, step=5):
     top    (list)(openmm.topology) - topology object of molecule
     pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
     model  (openmm.modeler)
-    (step) (int) - space between each molecule in sheet
+    (step) (float) - space between each molecule in sheet
     
     Returns
     =======
@@ -98,6 +98,7 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
     idx = np.random.choice(np.arange(0, len(tops)), size=height*width)
     axis_rotation = np.random.choice(['x','y','z'], size=height*width)
     angle = np.deg2rad(np.random.randint(0,360,size=height*width))
+    z_offset = np.random.randint(-5, 1, size=height*width)
 
     for i in range(height):
         for j in range(width):
@@ -106,6 +107,7 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
             pos = rotate(poss[idx[ij]], angle[ij], axis=axis_rotation[ij])
             pos = translate(pos, step * j, 'y')
             pos = translate(pos, step * i, 'x')
+            pos = translate(pos, z_offset[ij], 'z')
             model.add(tops[idx[ij]], pos)
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
@@ -147,6 +149,7 @@ c = rotate(mols["cytosine"]["positions"], np.deg2rad(0), axis='y')
 c = rotate(c, np.deg2rad(190), axis='x')
 # c = translate(c, 8, 'y')
 g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
+g = translate(g, .7, axis='x')
 # initializing the modeler requires a topology and pos
 # we immediately empty the modeler for use later
 model = Modeller(mols["guanine"]["topology"], g) 
@@ -154,7 +157,7 @@ model.delete(model.topology.atoms())
 
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
 sheet_indices = []
-sheet_indices.append(make_sheet(8, 8, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.5))
+sheet_indices.append(make_sheet(8, 8, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.45))
 
 # sheet_indices.append(make_sheet(4, 4, guanine_top, g, model))
 # offset the cytosine in the x dim to prevent putting the mols on top of each other
@@ -164,12 +167,8 @@ print("Molecules added")
 
 # add, at random, either an L or D ribose 
 ad_ribose_conformer = translate(ad_ribose_conformer, 4,'z')
-ad_ribose_conformer = translate(ad_ribose_conformer, 20, axis='x')
-ad_ribose_conformer = translate(ad_ribose_conformer, 20, axis='y')
 al_ribose_conformer = translate(al_ribose_conformer, 4,'z')
-al_ribose_conformer = translate(al_ribose_conformer, 20, axis='x')
-al_ribose_conformer = translate(al_ribose_conformer, 20, axis='y')
-make_sheet_random(4, 4, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
+make_sheet_random(12, 8, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
 
 print("Building system")
 forcefield = ForceField('amber14-all.xml', 'implicit/obc2.xml')

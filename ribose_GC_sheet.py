@@ -157,12 +157,17 @@ c = rotate(c, np.deg2rad(190), axis='x')
 g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
 g = translate(g, .7, axis='x')
 
+# initializing the modeler requires a topology and pos
+# we immediately empty the modeler for use later
+
 model = Modeller(mols["guanine"]["topology"], g) 
 model.delete(model.topology.atoms())
 
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
 sheet_indices = []
+
 sheet_indices.append(make_sheet(5, 5, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+
 
 make_sheet_random(2, 2, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
 print("Building system")

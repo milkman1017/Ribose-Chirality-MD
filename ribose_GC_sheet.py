@@ -104,6 +104,12 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
     angle = np.deg2rad(np.random.randint(0,360,size=height*width))
     z_offset = np.random.randint(-5, 1, size=height*width)
 
+    for i in idx:
+        if i == 0:
+            print('D')
+        else:
+            print('L')
+
     for i in range(height):
         for j in range(width):
             ij = i+j    
@@ -166,7 +172,7 @@ model.delete(model.topology.atoms())
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
 sheet_indices = []
 
-sheet_indices.append(make_sheet(5, 5, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+sheet_indices.append(make_sheet(1, 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
 
 make_sheet_random(2, 2, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
@@ -201,4 +207,4 @@ simulation.minimizeEnergy()
 simulation.reporters.append(PDBReporter('output.pdb', 20))
 simulation.reporters.append(StateDataReporter(stdout, 20, step=True,
         potentialEnergy=True, temperature=True))
-simulation.step(10000)
+simulation.step(100)

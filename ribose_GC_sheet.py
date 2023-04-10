@@ -121,27 +121,33 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
             model.add(tops[idx[ij]], pos)
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def load_mols(filenames):
+def load_mols(filenames, resnames):
     """Loads a molecule from file.
     Args
     ====
     filenames (list) - list of molecule sdf files
     """
     mols = {}
-    for name in filenames:
-        mol = Molecule.from_file(name, file_format='sdf')
+    for filename, resname in zip(filenames, resnames):
+        mol = Molecule.from_file(filename, file_format='sdf')
         mol.generate_conformers()
         conf = to_openmm(mol.conformers[0])
         top = mol.to_topology().to_openmm()
-        mols[name[:-4]] = {
+        top = md.Topology.from_openmm(top)
+        top.residue(0).name = resname
+        top = top.to_openmm()
+        mols[filename[:-4]] = {
             "mol":mol,
             "topology": top,
-            "positions": conf
+            "positions": conf,
+            'resname': resname
         }
     return mols
      
+
 #import molecules 
-mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'])
+mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
+                 ['DRIB', 'LRIB', 'GUA', "CYT"])
 
 #generate residue template 
 gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
@@ -172,7 +178,7 @@ model.delete(model.topology.atoms())
 #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
 sheet_indices = []
 
-sheet_indices.append(make_sheet(1, 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+sheet_indices.append(make_sheet(5, 5, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
 
 make_sheet_random(2, 2, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
@@ -189,6 +195,8 @@ restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
 restraint.addPerParticleParameter('x0')
 restraint.addPerParticleParameter('y0')
 restraint.addPerParticleParameter('z0')
+
+print(sheet_indices)
 
 for start, stop in sheet_indices:
     for i in range(start, stop):

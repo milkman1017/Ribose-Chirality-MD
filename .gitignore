@@ -4,5 +4,5 @@ output.pdb
 preEnergyMin.pdb
 
 cycle.sh
-* .csv
+*.csv
 

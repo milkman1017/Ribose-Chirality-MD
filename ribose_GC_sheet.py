@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", message="importing 'simtk.openmm' is deprecated. Import 'openmm' instead.")
+
 from openmm.app import *
 from openmm import *
 from openmm.unit import *
@@ -10,6 +13,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.pyplot as plt
 import mdtraj as md
+import argparse
+import multiprocessing as mp
+from tqdm import tqdm
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--nproc', type=int, default=8, help='number of simultaneously processes to use')
+    parser.add_argument('--outdir', type=str, default='.', help='output directory')
+    parser.add_argument('--nsim', type=int, default=8, help='number of simulations to run')
+    parser.add_argument('--ngpu', type=int, default=1, help='number of gpus on the system')
+    parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
+    parser.add_argument('--report', type=int, default=500, help='report interval')
+    parser.add_argument('--verbose', action='store_true', help='print verbose output')
+    parser.add_argument('--sh', type=int, default=5, help='sheet height')
+    parser.add_argument('--sw', type=int, default=5, help='sheet width')
+    parser.add_argument('--lconc', type=int, default=5, help='number of lribose molecules in a given sheet')
+    args = parser.parse_args()
+    return args
 
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
@@ -81,7 +102,7 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
             xspacing += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def make_sheet_random(height, width, tops, poss, model, step=5):
+def make_sheet_random(height, width, tops, poss, model, lconc, step=5):
     """Creates an evenly spaced sheet of molecules randomly picked from given list
         and attaches it to openmm modeler.
     Gives molecule random rotation.
@@ -98,27 +119,27 @@ def make_sheet_random(height, width, tops, poss, model, step=5):
     =======
     index_coords (list) - (starting index, ending index) of sheet in modeler"""
     sheet_starting_index = model.topology.getNumAtoms()
+    # create a list of lconc tops[1]
+    ls = [1] * lconc
+    ds = [0] * (height*width - lconc)
+    idx = [*ls, *ds]
+    np.random.shuffle(idx)
+    idx = np.array(idx)
     # precalculate random variables
-    idx = np.random.choice(np.arange(0, len(tops)), size=height*width)
+    # idx = np.random.choice(np.arange(0, len(tops)), size=height*width)
     axis_rotation = np.random.choice(['x','y','z'], size=height*width)
     angle = np.deg2rad(np.random.randint(0,360,size=height*width))
     z_offset = np.random.randint(-5, 1, size=height*width)
-
-    for i in idx:
-        if i == 0:
-            print('D')
-        else:
-            print('L')
-
+    k = 0
     for i in range(height):
-        for j in range(width):
-            ij = i+j    
+        for j in range(width):    
             # x axis
-            pos = rotate(poss[idx[ij]], angle[ij], axis=axis_rotation[ij])
+            pos = rotate(poss[idx[k]], angle[k], axis=axis_rotation[k])
             pos = translate(pos, step * j, 'y')
             pos = translate(pos, step * i, 'x')
-            pos = translate(pos, z_offset[ij], 'z')
-            model.add(tops[idx[ij]], pos)
+            pos = translate(pos, z_offset[k], 'z')
+            model.add(tops[idx[k]], pos)
+            k+=1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def load_mols(filenames, resnames):
@@ -143,76 +164,107 @@ def load_mols(filenames, resnames):
             'resname': resname
         }
     return mols
+
+
+def simulate(jobid, device_idx, args):
+    print(device_idx)
+    mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
+                    ['DRIB', 'LRIB', 'GUA', "CYT"])
+
+    #generate residue template 
+    gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
+    #move above and to middle of sheet
+    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], 14, 'z')
+    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'y')
+    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
+
+    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], 14, 'z')
+    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
+    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
+    if(args.verbose):
+        print("Building molecules:", jobid)
+
+    #line up the guanine and cytosines so that the molecules face eachother
+    c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
+    c = rotate(c, np.deg2rad(180), axis='y')
+    c = rotate(c, np.deg2rad(190), axis='x')
+    # c = translate(c, 8, 'y')
+    g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
+    g = translate(g, .7, axis='x')
+
+    # initializing the modeler requires a topology and pos
+    # we immediately empty the modeler for use later
+
+    model = Modeller(mols["guanine"]["topology"], g) 
+    model.delete(model.topology.atoms())
+
+    #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
+    sheet_indices = []
+
+    sheet_indices.append(make_sheet(args.sh, args.sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+
+
+    make_sheet_random(args.sh, args.sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args.lconc, step=8)
+    if(args.verbose):
+        print("Building system:", jobid)
+    forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
+    forcefield.registerTemplateGenerator(gaff.generator)
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize = Vec3(args.sh + 1, args.sw + 1 , 3)*nanometers)
+    system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=1*nanometer, constraints=HBonds)
+
+    # create position restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
+    restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
+    system.addForce(restraint)
+    restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
+    restraint.addPerParticleParameter('x0')
+    restraint.addPerParticleParameter('y0')
+    restraint.addPerParticleParameter('z0')
+
+    for start, stop in sheet_indices:
+        for i in range(start, stop):
+            restraint.addParticle(i, model.positions[i])
+
+    integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
+    model.addExtraParticles(forcefield)
+    platform = Platform.getPlatformByName('CUDA')
+    properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'double'}
+
+    simulation = Simulation(model.topology, system, integrator, platform, properties)
+    simulation.context.setPositions(model.positions)
+    simulation.context.setVelocitiesToTemperature(300*kelvin)
+    # preEnergyMinPositions = simulation.context.getState(getPositions = True).getPositions()
+    # PDBFile.writeFile(simulation.topology, model.positions, open('preEnergyMin.pdb','w'))
+    # print('Saved Pre-Energy Minimization Positions')
+    simulation.minimizeEnergy()
+
+    simulation.reporters.append(PDBReporter(f"{args.outdir}/output{jobid}.pdb", args.report))
+    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True))
+    simulation.step(args.nsteps)
      
+def main():
+    args = parse_args()
+    total_sims = args.nsim
+    gpus = args.ngpu
+    proc = args.nproc
+    jobs = 0
+    processes = []
 
-#import molecules 
-mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
-                 ['DRIB', 'LRIB', 'GUA', "CYT"])
+    with tqdm(total=total_sims) as pbar:
+        while jobs < total_sims:
+            if(len(processes) < proc):
+                print("Starting process", jobs)
+                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
+                p.start()
+                processes.append(p)
+                jobs += 1
+            for p in processes:
+                if not p.is_alive():
+                    processes.remove(p)
+                    pbar.update(1)
 
-#generate residue template 
-gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
-#move above and to middle of sheet
-ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], 14, 'z')
-ad_ribose_conformer = translate(ad_ribose_conformer, 10, 'y')
-ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()
 
-al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], 14, 'z')
-al_ribose_conformer = translate(al_ribose_conformer, 10, 'y')
-al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
-print("Building molecules")
-
-#line up the guanine and cytosines so that the molecules face eachother
-c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
-c = rotate(c, np.deg2rad(180), axis='y')
-c = rotate(c, np.deg2rad(190), axis='x')
-# c = translate(c, 8, 'y')
-g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-g = translate(g, .7, axis='x')
-
-# initializing the modeler requires a topology and pos
-# we immediately empty the modeler for use later
-
-model = Modeller(mols["guanine"]["topology"], g) 
-model.delete(model.topology.atoms())
-
-#make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
-sheet_indices = []
-
-sheet_indices.append(make_sheet(5, 5, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
-
-
-make_sheet_random(2, 2, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, step=8)
-print("Building system")
-forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
-forcefield.registerTemplateGenerator(gaff.generator)
-# model.addSolvent(forcefield=forcefield, model='tip3p', boxSize = Vec3(8.5, 6, 3)*nanometers)
-system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=1*nanometer, constraints=HBonds)
-
-# create position restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
-restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
-system.addForce(restraint)
-restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
-restraint.addPerParticleParameter('x0')
-restraint.addPerParticleParameter('y0')
-restraint.addPerParticleParameter('z0')
-
-print(sheet_indices)
-
-for start, stop in sheet_indices:
-    for i in range(start, stop):
-        restraint.addParticle(i, model.positions[i])
-
-integrator = LangevinMiddleIntegrator(300*kelvin, 6/picosecond, 0.004*picoseconds)
-model.addExtraParticles(forcefield)
-simulation = Simulation(model.topology, system, integrator)
-simulation.context.setPositions(model.positions)
-simulation.context.setVelocitiesToTemperature(300*kelvin)
-preEnergyMinPositions = simulation.context.getState(getPositions = True).getPositions()
-PDBFile.writeFile(simulation.topology, model.positions, open('preEnergyMin.pdb','w'))
-print('Saved Pre-Energy Minimization Positions')
-simulation.minimizeEnergy()
-
-simulation.reporters.append(PDBReporter('output.pdb', 20))
-simulation.reporters.append(StateDataReporter(stdout, 20, step=True,
-        potentialEnergy=True, temperature=True))
-simulation.step(100)
+if __name__ == "__main__":
+    main()

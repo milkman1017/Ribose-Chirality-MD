@@ -16,13 +16,14 @@ import mdtraj as md
 import argparse
 import multiprocessing as mp
 from tqdm import tqdm
+import json
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--nproc', type=int, default=8, help='number of simultaneously processes to use')
+    parser.add_argument('--nprocs', type=int, default=8, help='number of simultaneously processes to use')
     parser.add_argument('--outdir', type=str, default='.', help='output directory')
-    parser.add_argument('--nsim', type=int, default=8, help='number of simulations to run')
-    parser.add_argument('--ngpu', type=int, default=1, help='number of gpus on the system')
+    parser.add_argument('--nsims', type=int, default=8, help='number of simulations to run')
+    parser.add_argument('--ngpus', type=int, default=1, help='number of gpus on the system')
     parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
     parser.add_argument('--report', type=int, default=500, help='report interval')
     parser.add_argument('--verbose', action='store_true', help='print verbose output')
@@ -227,25 +228,45 @@ def simulate(jobid, device_idx, args):
     integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
     model.addExtraParticles(forcefield)
     platform = Platform.getPlatformByName('CUDA')
-    properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'double'}
+    properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
 
     simulation = Simulation(model.topology, system, integrator, platform, properties)
     simulation.context.setPositions(model.positions)
     simulation.context.setVelocitiesToTemperature(300*kelvin)
-    # preEnergyMinPositions = simulation.context.getState(getPositions = True).getPositions()
-    # PDBFile.writeFile(simulation.topology, model.positions, open('preEnergyMin.pdb','w'))
-    # print('Saved Pre-Energy Minimization Positions')
     simulation.minimizeEnergy()
 
-    simulation.reporters.append(PDBReporter(f"{args.outdir}/output{jobid}.pdb", args.report))
-    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True))
-    simulation.step(args.nsteps)
-     
+    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
+    trajectory = []
+
+    model_top = model.getTopology()
+    for _ in range(0,args.nsteps, args.report):
+        simulation.step(args.report)
+        state = simulation.context.getState(getPositions=True, getVelocities=True)
+        positions = state.getPositions(asNumpy=True).tolist()
+        velocities = state.getVelocities(asNumpy=True).tolist()
+        frame = dict()
+        
+        for atom in model_top.atoms():
+            resname = atom.residue.name + str(atom.residue.index)
+            if("HOH" in resname):
+                continue
+            if(resname not in frame.keys()):
+                frame[resname] = dict()
+                frame[resname]['positions'] = []
+                frame[resname]['velocities'] = []
+                
+            frame[resname]['positions'].append(positions[atom.index]) 
+            frame[resname]['velocities'].append(velocities[atom.index])
+
+        trajectory.append(frame)
+    with open(f"{args.outdir}/output{jobid}.json", 'w') as f:
+        f.write(json.dumps(trajectory))
+    
 def main():
     args = parse_args()
-    total_sims = args.nsim
-    gpus = args.ngpu
-    proc = args.nproc
+    total_sims = args.nsims
+    gpus = args.ngpus
+    proc = args.nprocs
     jobs = 0
     processes = []
 

@@ -2,7 +2,6 @@ INTERFACE_FF_1_5
 toppar
 output.pdb
 preEnergyMin.pdb
-
 cycle.sh
 *.csv
 *.json

@@ -3,57 +3,49 @@ import json
 from openmm.unit import *
 import glob
 import matplotlib.pyplot as plt
-data = []
+from tqdm import tqdm as pbar
 
-for f in glob.glob('*.json'):
-   input = open(f)
-   values = json.load(input)
-   data.append(values)
-
-
-dribose_positions = []
-lribose_positions = []
-
-for sim in data:
-    for step in sim:
-        for res in step:
-            if res[:1] == 'D':
-                dribose_positions.append(step[str(res)]['positions'])
-            if res[:1] == 'L':
-                lribose_positions.append(step[str(res)]['positions'])
-
-
-def compute_rdf(dribose_positions, lribose_positions):
+def rdf(lconc, nsims, filepath):
+   lconc = 3
+   nsims = 200
+   filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
 
    dribose_rdf = []
    lribose_rdf = []
-   for mol in dribose_positions:
-      for atom in mol:
-         dribose_rdf.append(atom[-1])
-         pass
-      pass
+   for filename in pbar(filenames, desc="Loading Data"):
+         # traj is a list of frames
+         # frames are dicts of residues
+         with open(filename) as f:
+            traj = json.load(f)
+         f.close()
+         for frame in traj:
+            for res in frame:
+                  if res[0] == 'D':
+                     dribose_rdf.append(np.array(frame[res]['positions'])[:,-1])
+                  if res[0] == 'L':
+                     lribose_rdf.append(np.array(frame[res]['positions'])[:,-1])
 
-   for mol in lribose_positions:
-      for atom in mol:
-         lribose_rdf.append(atom[-1])
-         pass
-      pass
-   
-   d_rdf = np.histogram(dribose_rdf, bins = 'auto')
-   l_rdf = np.histogram(lribose_positions, bins='auto')
+   d_vals, d_bins = np.histogram(dribose_rdf, bins='auto')
+   l_vals, l_bins = np.histogram(lribose_rdf, bins='auto')
+
+   d_rdf = [d_vals/np.sum(d_vals), d_bins]
+   l_rdf = [l_vals/np.sum(l_vals), l_bins]
 
    fig, ax = plt.subplots(2,1)
 
    ax[0].step(d_rdf[1][0:-1], d_rdf[0])
    ax[0].set_title('D-Ribose RDF')
+   ax[0].set_xlim([0, 4])
+   ax[0].set_xticks(np.arange(0, 4, 0.5))
+
 
    ax[1].set_title('L-Ribose RDF')
    ax[1].step(l_rdf[1][0:-1], l_rdf[0])
+   ax[1].set_xlim([0, 4])
+   ax[1].set_xticks(np.arange(0, 4, 0.5))
+
 
    fig.supxlabel('Distance Above Sheet (Nanometer)')
    fig.supylabel('Count')
 
-   plt.show()
-   
-    
-compute_rdf(dribose_positions, lribose_positions)
+   plt.savefig(f"ribose_rdf{lconc}_{nsims}.png")

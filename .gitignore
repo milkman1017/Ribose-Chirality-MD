@@ -5,3 +5,5 @@ preEnergyMin.pdb
 cycle.sh
 *.csv
 *.json
+*.txt
+

@@ -1,35 +1,59 @@
-import csv 
 import numpy as np 
-import mdtraj as md
+import json 
 from openmm.unit import *
+import glob
+import matplotlib.pyplot as plt
+data = []
 
-def compute_rdf():
-    print('loading input')
-    traj = md.load('output.pdb')
+for f in glob.glob('*.json'):
+   input = open(f)
+   values = json.load(input)
+   data.append(values)
 
-    radii_out = []
-    density_out = []
 
-    # need to do this for rdf
-    box_length = 10.0 * angstrom
-    box_vectors = np.eye(3) * box_length
-    traj.unitcell_vectors = np.array([box_vectors] * traj.n_frames) 
+dribose_positions = []
+lribose_positions = []
 
-    pairs = np.array([(123,920)])
+for sim in data:
+    for step in sim:
+        for res in step:
+            if res[:1] == 'D':
+                dribose_positions.append(step[str(res)]['positions'])
+            if res[:1] == 'L':
+                lribose_positions.append(step[str(res)]['positions'])
 
-    print('Computing RDF')
-    radii, density = md.compute_rdf(traj, pairs, r_range = (1,6), bin_width = 0.05)
-    radii_out.append(radii)
-    density_out.append(density)
 
-    radii_out = np.mean(radii_out, axis = 0)
-    density_out = np.mean(density_out, axis = 0)
+def compute_rdf(dribose_positions, lribose_positions):
 
-    print('saving data')
-    with open('rdf.csv', 'w') as f:
-        writer = csv.writer(f)
-        writer.writerow(radii_out)
-        writer.writerow(density_out)
+   dribose_rdf = []
+   lribose_rdf = []
+   for mol in dribose_positions:
+      for atom in mol:
+         dribose_rdf.append(atom[-1])
+         pass
+      pass
 
-compute_rdf()
+   for mol in lribose_positions:
+      for atom in mol:
+         lribose_rdf.append(atom[-1])
+         pass
+      pass
+   
+   d_rdf = np.histogram(dribose_rdf, bins = 'auto')
+   l_rdf = np.histogram(lribose_positions, bins='auto')
 
+   fig, ax = plt.subplots(2,1)
+
+   ax[0].step(d_rdf[1][0:-1], d_rdf[0])
+   ax[0].set_title('D-Ribose RDF')
+
+   ax[1].set_title('L-Ribose RDF')
+   ax[1].step(l_rdf[1][0:-1], l_rdf[0])
+
+   fig.supxlabel('Distance Above Sheet (Nanometer)')
+   fig.supylabel('Count')
+
+   plt.show()
+   
+    
+compute_rdf(dribose_positions, lribose_positions)

@@ -51,7 +51,7 @@ def rdf(lconc, nsims, filepath):
 
    plt.show()
 
-def compute_2D_rdf(nsims, filepath):
+def compute_2D_rdf(lconc, nsims, filepath):
    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
    dribose_dx = []
    lribose_dx = []
@@ -82,7 +82,7 @@ def compute_2D_rdf(nsims, filepath):
 
    ax[0].hist2d(np.array(dribose_dx).flatten(), np.array(dribose_dy).flatten(), bins=500)
    ax[0].set_title('D-Ribose')
-   ax[1].hist2d(np.array(lribose_dx).flatten(), np.array(lribose_dy).flatten(), bins=100)
+   ax[1].hist2d(np.array(lribose_dx).flatten(), np.array(lribose_dy).flatten(), bins=500)
    ax[1].set_title('L-Ribose')
 
    plt.show()
@@ -115,41 +115,76 @@ def compute_angles(lcon, nsims, filepath):
                   #define configuration of molecuels by getting three non colinear points
                   #arbitrarly chose the first, last, and middle indexed atoms 
                   if res[0] == 'D':
-                     first_atom = frame[res]['positions'][0]
-                     last_atom = frame[res]['positions'][-1]
-                     middle_atom = frame[res]['positions'][len(frame[res]['positions'])//2]
+                     index = len(frame[res]['positions'])//3 
+
+                     first_atom = frame[res]['positions'][index]
+                     middle_atom = frame[res]['positions'][index*2]
+                     last_atom = frame[res]['positions'][index*3]
+
                      config = np.array([first_atom, middle_atom, last_atom])
 
                      #obtain normal vector and normalize
 
                      vector1 = config[1] - config[0]
                      vector2 = config[2] - config[0]
+
                      normal_orientation = np.cross(vector1, vector2)/np.linalg.norm(np.cross(vector1, vector2))
 
-                     dribose_angle_x.append(np.degrees(np.arccos(np.dot(x_axis, normal_orientation))))
-                     dribose_angle_y.append(np.degrees(np.arccos(np.dot(y_axis, normal_orientation))))
-                     dribose_angle_z.append(np.degrees(np.arccos(np.dot(z_axis, normal_orientation))))
+                     angle_x = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(y_axis, z_axis)), np.dot(normal_orientation, y_axis))) + 180
+                     angle_y = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(z_axis, x_axis)), np.dot(normal_orientation, z_axis))) + 180
+                     angle_z = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(x_axis, y_axis)), np.dot(normal_orientation, x_axis))) + 180
 
+                     dribose_angle_x.append(angle_x)
+                     dribose_angle_y.append(angle_y)
+                     dribose_angle_z.append(angle_z)
 
                   if res[0] == 'L':
-                     lribose_pos = []
-                     first_atom = frame[res]['positions'][0]
-                     last_atom = frame[res]['positions'][-1]
-                     middle_atom = frame[res]['positions'][len(frame[res]['positions'])//2]
-                     config = [first_atom, middle_atom, last_atom]
-                     lribose_pos.append(np.array(config))
+                     index = len(frame[res]['positions'])//3 
 
-   fig, ax = plt.subplots(1,3)
+                     first_atom = frame[res]['positions'][index]
+                     middle_atom = frame[res]['positions'][index*2]
+                     last_atom = frame[res]['positions'][index*3]
 
-   dribose_x_hist = np.histogram(dribose_angle_x, bins='auto')
-   dribose_y_hist = np.histogram(dribose_angle_y, bins='auto')
-   dribose_z_hist = np.histogram(dribose_angle_z, bins='auto')
+                     config = np.array([first_atom, middle_atom, last_atom])
 
-   ax[0].step(dribose_x_hist[1][0:-1], dribose_x_hist[0])
-   ax[1].step(dribose_y_hist[1][0:-1], dribose_y_hist[0])
-   ax[2].step(dribose_z_hist[1][0:-1], dribose_z_hist[0])
+                     #obtain normal vector and normalize
+
+                     vector1 = config[1] - config[0]
+                     vector2 = config[2] - config[0]
+                     
+                     normal_orientation = np.cross(vector1, vector2)/np.linalg.norm(np.cross(vector1, vector2))
+
+                     angle_x = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(y_axis, z_axis)), np.dot(normal_orientation, y_axis))) + 180
+                     angle_y = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(z_axis, x_axis)), np.dot(normal_orientation, z_axis))) + 180
+                     angle_z = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(x_axis, y_axis)), np.dot(normal_orientation, x_axis))) + 180
+
+                     lribose_angle_x.append(angle_x)
+                     lribose_angle_y.append(angle_y)
+                     lribose_angle_z.append(angle_z)
+
+
+   fig, ax = plt.subplots(2,3, subplot_kw={'projection':'polar'})
+
+   dribose_x_hist = np.histogram(dribose_angle_x, bins= 500)
+   dribose_y_hist = np.histogram(dribose_angle_y, bins=500)
+   dribose_z_hist = np.histogram(dribose_angle_z, bins=500)
+
+   lribose_x_hist = np.histogram(lribose_angle_x, bins=500)
+   lribose_y_hist = np.histogram(lribose_angle_y, bins=500)
+   lribose_z_hist = np.histogram(lribose_angle_z, bins=500)
+
+   ax[0][0].step(dribose_x_hist[1][0:-1], dribose_x_hist[0])
+   ax[0][1].step(dribose_y_hist[1][0:-1], dribose_y_hist[0])
+   ax[0][2].step(dribose_z_hist[1][0:-1], dribose_z_hist[0])
+
+   ax[1][0].step(lribose_x_hist[1][0:-1], lribose_x_hist[0])
+   ax[1][1].step(lribose_y_hist[1][0:-1], lribose_y_hist[0])
+   ax[1][2].step(lribose_z_hist[1][0:-1], lribose_z_hist[0])
 
    plt.show()
 
-compute_angles(2,2,'.')
+   #normalize coordinate vectors 
+
+compute_angles(32,2,'.')
+
 

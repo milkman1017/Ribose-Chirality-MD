@@ -112,66 +112,62 @@ def compute_angles(lcon, nsims, filepath):
          for frame in traj:
             for res in frame:
                   
-                  #define configuration of molecuels by getting three non colinear points
-                  #arbitrarly chose the first, last, and middle indexed atoms 
                   if res[0] == 'D':
-                     index = len(frame[res]['positions'])//3 
+                     mol = np.array(frame[res]['positions'])
 
-                     first_atom = frame[res]['positions'][index]
-                     middle_atom = frame[res]['positions'][index*2]
-                     last_atom = frame[res]['positions'][index*3]
+                     #get centroid and move coordinates relative to the centroid to determine objects orientation and account for translation  
+                     centroid = np.average(mol, axis=0)
+                     mol -= centroid
 
-                     config = np.array([first_atom, middle_atom, last_atom])
+                     #covariance matrix to get vector describing the most elongated part of the ribose
+                     cov_matrix = np.cov(mol, rowvar=False)
 
-                     #obtain normal vector and normalize
+                     #get principle axes 
+                     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
+                     principle_axes = eigenvectors.T
 
-                     vector1 = config[1] - config[0]
-                     vector2 = config[2] - config[0]
+                     print(principle_axes)
 
-                     normal_orientation = np.cross(vector1, vector2)/np.linalg.norm(np.cross(vector1, vector2))
-
-                     angle_x = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(y_axis, z_axis)), np.dot(normal_orientation, y_axis))) + 180
-                     angle_y = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(z_axis, x_axis)), np.dot(normal_orientation, z_axis))) + 180
-                     angle_z = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(x_axis, y_axis)), np.dot(normal_orientation, x_axis))) + 180
+                     angle_x = (np.degrees(np.arccos(np.dot(x_axis, principle_axes[0])))+360) % 360
+                     angle_y = (np.degrees(np.arccos(np.dot(y_axis, principle_axes[1])))+360) % 360
+                     angle_z = (np.degrees(np.arccos(np.dot(z_axis, principle_axes[2])))+360) % 360
 
                      dribose_angle_x.append(angle_x)
                      dribose_angle_y.append(angle_y)
                      dribose_angle_z.append(angle_z)
 
                   if res[0] == 'L':
-                     index = len(frame[res]['positions'])//3 
+                     mol = np.array(frame[res]['positions'])
 
-                     first_atom = frame[res]['positions'][index]
-                     middle_atom = frame[res]['positions'][index*2]
-                     last_atom = frame[res]['positions'][index*3]
+                     #get centroid and move coordinates relative to the centroid to determine objects orientation and account for translation  
+                     centroid = np.average(mol, axis=0)
+                     mol -= centroid
 
-                     config = np.array([first_atom, middle_atom, last_atom])
+                     #covariance matrix to get vector describing the most elongated part of the ribose
+                     cov_matrix = np.cov(mol, rowvar=False)
 
-                     #obtain normal vector and normalize
+                     #get principle axes 
+                     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
+                     principle_axes = eigenvectors.T
 
-                     vector1 = config[1] - config[0]
-                     vector2 = config[2] - config[0]
-                     
-                     normal_orientation = np.cross(vector1, vector2)/np.linalg.norm(np.cross(vector1, vector2))
-
-                     angle_x = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(y_axis, z_axis)), np.dot(normal_orientation, y_axis))) + 180
-                     angle_y = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(z_axis, x_axis)), np.dot(normal_orientation, z_axis))) + 180
-                     angle_z = np.degrees(np.arctan2(np.dot(normal_orientation, np.cross(x_axis, y_axis)), np.dot(normal_orientation, x_axis))) + 180
+                     angle_x = (np.degrees(np.arccos(np.dot(x_axis, principle_axes[0])))+360) % 360
+                     angle_y = (np.degrees(np.arccos(np.dot(y_axis, principle_axes[1])))+360) % 360
+                     angle_z = (np.degrees(np.arccos(np.dot(z_axis, principle_axes[2])))+360) % 360
 
                      lribose_angle_x.append(angle_x)
                      lribose_angle_y.append(angle_y)
                      lribose_angle_z.append(angle_z)
 
 
-   fig, ax = plt.subplots(2,3, subplot_kw={'projection':'polar'})
+   fig, ax = plt.subplots(2,3)
 
-   dribose_x_hist = np.histogram(dribose_angle_x, bins= 500)
-   dribose_y_hist = np.histogram(dribose_angle_y, bins=500)
-   dribose_z_hist = np.histogram(dribose_angle_z, bins=500)
+   dribose_x_hist = np.histogram(dribose_angle_x, bins='auto')
+   dribose_y_hist = np.histogram(dribose_angle_y, bins='auto')
+   dribose_z_hist = np.histogram(dribose_angle_z, bins='auto')
 
-   lribose_x_hist = np.histogram(lribose_angle_x, bins=500)
-   lribose_y_hist = np.histogram(lribose_angle_y, bins=500)
-   lribose_z_hist = np.histogram(lribose_angle_z, bins=500)
+   lribose_x_hist = np.histogram(lribose_angle_x, bins='auto')
+   lribose_y_hist = np.histogram(lribose_angle_y, bins='auto')
+   lribose_z_hist = np.histogram(lribose_angle_z, bins='auto')
 
    ax[0][0].step(dribose_x_hist[1][0:-1], dribose_x_hist[0])
    ax[0][1].step(dribose_y_hist[1][0:-1], dribose_y_hist[0])
@@ -183,8 +179,9 @@ def compute_angles(lcon, nsims, filepath):
 
    plt.show()
 
-   #normalize coordinate vectors 
+   return dribose_angle_x, dribose_angle_y, dribose_angle_z, lribose_angle_x, lribose_angle_y, lribose_angle_z
 
-compute_angles(32,2,'.')
+
+dribose_angle_x, dribose_angle_y, dribose_angle_z, lribose_angle_x, lribose_angle_y, lribose_angle_z = compute_angles(32,25,'.')
 
 

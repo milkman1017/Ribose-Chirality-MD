@@ -8,32 +8,28 @@ from mpl_toolkits.mplot3d import Axes3D
 from pylab import *
 
 def rdf(lconc, nsims, filepath):
-
    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
 
    dribose_rdf = []
    lribose_rdf = []
    for filename in pbar(filenames, desc="Loading Data"):
-         # traj is a list of frames
-         # frames are dicts of residues
-         with open(filename) as f:
-            traj = json.load(f)
-         f.close()
-         for frame in traj:
-            for res in frame:
-                  if res[0] == 'D':
-                     dribose_rdf.append(np.array(frame[res]['positions'])[:,-1])
-                  if res[0] == 'L':
-                     lribose_rdf.append(np.array(frame[res]['positions'])[:,-1])
+      with open(filename) as f:
+         traj = json.load(f)
+      f.close()
+      for frame in traj:
+         for res in frame:
+               if res[0] == 'D':
+                  dribose_rdf.append(np.array(frame[res]['positions'])[:, -1])
+               if res[0] == 'L':
+                  lribose_rdf.append(np.array(frame[res]['positions'])[:, -1])
 
+    #Calculate D-Ribose RDF
+   d_rdf = np.histogram(dribose_rdf, bins='auto', density=True)
 
-   d_vals, d_bins = np.histogram(dribose_rdf, bins='auto')
-   l_vals, l_bins = np.histogram(lribose_rdf, bins='auto')
+   # Calculate L-Ribose RDF
+   l_rdf = np.histogram(lribose_rdf, bins='auto', density=True)
 
-   d_rdf = [d_vals/np.sum(d_vals), d_bins]
-   l_rdf = [l_vals/np.sum(l_vals), l_bins]
-
-   fig, ax = plt.subplots(2,1)
+   fig, ax = plt.subplots(2, 1)
 
    ax[0].step(d_rdf[1][0:-1], d_rdf[0])
    ax[0].set_title('D-Ribose RDF')
@@ -47,7 +43,7 @@ def rdf(lconc, nsims, filepath):
 
    fig.suptitle('Z RDF')
    fig.supxlabel('Distance Above Sheet (Nanometer)')
-   fig.supylabel('Count')
+   fig.supylabel('g(r)')
 
    plt.show()
 
@@ -87,8 +83,8 @@ def compute_2D_rdf(lconc, nsims, filepath):
 
    plt.show()
 
-def compute_angles(lcon, nsims, filepath):
-   filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+def compute_angles(lconc, nsims, filepath):
+   filenames = glob.glob(f"{filepath}/*.json")[:nsims]
 
    dribose_angle_x = []
    dribose_angle_y = []
@@ -98,90 +94,59 @@ def compute_angles(lcon, nsims, filepath):
    lribose_angle_y = []
    lribose_angle_z = []
 
-   #define axes 
-   x_axis = np.array([1,0,0])
-   y_axis = np.array([0,1,0])
-   z_axis = np.array([0,0,1])
+   x_axis = np.array([1, 0, 0])
+   y_axis = np.array([0, 1, 0])
+   z_axis = np.array([0, 0, 1])
+
+   angle_lists = [(dribose_angle_x, dribose_angle_y, dribose_angle_z), (lribose_angle_x, lribose_angle_y, lribose_angle_z)]
 
    for filename in pbar(filenames, desc="Loading Data"):
-         # traj is a list of frames
-         # frames are dicts of residues
-         with open(filename) as f:
-            traj = json.load(f)
-         f.close()
+      with open(filename) as f:
+         traj = json.load(f)
+      
          for frame in traj:
             for res in frame:
+               if res[0] in ['D', 'L']:
+                     mol = np.array(frame[res]['positions'])
+
+                     centroid = np.average(mol, axis=0)
+                     mol -= centroid
+
+                     cov_matrix = np.cov(mol, rowvar=False)
+
+                     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
+                     principle_axes = eigenvectors.T
+
+                     dot_products = np.dot(principle_axes, [x_axis, y_axis, z_axis])
+
+                     angles = np.degrees(np.arctan2(dot_products[:, 1], dot_products[:, 0]))+180
+                     angle_x, angle_y, angle_z = angles
+
+                     angle_list = angle_lists[res[0] == 'L']
+
+                     angle_list[0].append(angle_x)
+                     angle_list[1].append(angle_y)
+                     angle_list[2].append(angle_z)
                   
-                  if res[0] == 'D':
-                     mol = np.array(frame[res]['positions'])
+   fig, ax = plt.subplots(2, 3)
 
-                     #get centroid and move coordinates relative to the centroid to determine objects orientation and account for translation  
-                     centroid = np.average(mol, axis=0)
-                     mol -= centroid
+   histograms = [
+      np.histogram(dribose_angle_x, bins='auto', density=True),
+      np.histogram(dribose_angle_y, bins='auto', density=True),
+      np.histogram(dribose_angle_z, bins='auto', density=True),
+      np.histogram(lribose_angle_x, bins='auto', density=True),
+      np.histogram(lribose_angle_y, bins='auto', density=True),
+      np.histogram(lribose_angle_z, bins='auto', density=True)
+   ]
 
-                     #covariance matrix to get vector describing the most elongated part of the ribose
-                     cov_matrix = np.cov(mol, rowvar=False)
-
-                     #get principle axes 
-                     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-                     principle_axes = eigenvectors.T
-
-                     print(principle_axes)
-
-                     angle_x = (np.degrees(np.arccos(np.dot(x_axis, principle_axes[0])))+360) % 360
-                     angle_y = (np.degrees(np.arccos(np.dot(y_axis, principle_axes[1])))+360) % 360
-                     angle_z = (np.degrees(np.arccos(np.dot(z_axis, principle_axes[2])))+360) % 360
-
-                     dribose_angle_x.append(angle_x)
-                     dribose_angle_y.append(angle_y)
-                     dribose_angle_z.append(angle_z)
-
-                  if res[0] == 'L':
-                     mol = np.array(frame[res]['positions'])
-
-                     #get centroid and move coordinates relative to the centroid to determine objects orientation and account for translation  
-                     centroid = np.average(mol, axis=0)
-                     mol -= centroid
-
-                     #covariance matrix to get vector describing the most elongated part of the ribose
-                     cov_matrix = np.cov(mol, rowvar=False)
-
-                     #get principle axes 
-                     eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-                     principle_axes = eigenvectors.T
-
-                     angle_x = (np.degrees(np.arccos(np.dot(x_axis, principle_axes[0])))+360) % 360
-                     angle_y = (np.degrees(np.arccos(np.dot(y_axis, principle_axes[1])))+360) % 360
-                     angle_z = (np.degrees(np.arccos(np.dot(z_axis, principle_axes[2])))+360) % 360
-
-                     lribose_angle_x.append(angle_x)
-                     lribose_angle_y.append(angle_y)
-                     lribose_angle_z.append(angle_z)
-
-
-   fig, ax = plt.subplots(2,3)
-
-   dribose_x_hist = np.histogram(dribose_angle_x, bins='auto')
-   dribose_y_hist = np.histogram(dribose_angle_y, bins='auto')
-   dribose_z_hist = np.histogram(dribose_angle_z, bins='auto')
-
-   lribose_x_hist = np.histogram(lribose_angle_x, bins='auto')
-   lribose_y_hist = np.histogram(lribose_angle_y, bins='auto')
-   lribose_z_hist = np.histogram(lribose_angle_z, bins='auto')
-
-   ax[0][0].step(dribose_x_hist[1][0:-1], dribose_x_hist[0])
-   ax[0][1].step(dribose_y_hist[1][0:-1], dribose_y_hist[0])
-   ax[0][2].step(dribose_z_hist[1][0:-1], dribose_z_hist[0])
-
-   ax[1][0].step(lribose_x_hist[1][0:-1], lribose_x_hist[0])
-   ax[1][1].step(lribose_y_hist[1][0:-1], lribose_y_hist[0])
-   ax[1][2].step(lribose_z_hist[1][0:-1], lribose_z_hist[0])
+   for i, histogram in enumerate(histograms):
+      row = i // 3
+      col = i % 3
+      ax[row][col].step(histogram[1][:-1], histogram[0])
 
    plt.show()
 
-   return dribose_angle_x, dribose_angle_y, dribose_angle_z, lribose_angle_x, lribose_angle_y, lribose_angle_z
+compute_angles(32,2,'.')
 
-
-dribose_angle_x, dribose_angle_y, dribose_angle_z, lribose_angle_x, lribose_angle_y, lribose_angle_z = compute_angles(32,25,'.')
 
 

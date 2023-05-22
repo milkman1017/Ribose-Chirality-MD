@@ -76,7 +76,7 @@ def compute_2D_rdf(lconc, nsims, filepath):
    fig.supxlabel('X coordinate (nm)')
    fig.supylabel('Y Coordinate (nm)')
 
-   ax[0].hist2d(np.array(dribose_dx).flatten(), np.array(dribose_dy).flatten(), bins=500)
+   ax[0].hist2d(np.array(dribose_dx).flatten(), np.array(dribose_dy).flatten(), bins=500, density=True)
    ax[0].set_title('D-Ribose')
    ax[1].hist2d(np.array(lribose_dx).flatten(), np.array(lribose_dy).flatten(), bins=500)
    ax[1].set_title('L-Ribose')
@@ -128,23 +128,33 @@ def compute_angles(lconc, nsims, filepath):
                      angle_list[1].append(angle_y)
                      angle_list[2].append(angle_z)
                   
-   fig, ax = plt.subplots(2, 3)
 
-   histograms = [
-      np.histogram(dribose_angle_x, bins='auto', density=True),
-      np.histogram(dribose_angle_y, bins='auto', density=True),
-      np.histogram(dribose_angle_z, bins='auto', density=True),
-      np.histogram(lribose_angle_x, bins='auto', density=True),
-      np.histogram(lribose_angle_y, bins='auto', density=True),
-      np.histogram(lribose_angle_z, bins='auto', density=True)
-   ]
+   fig, ax = plt.subplots(2, subplot_kw={'projection': 'polar'})
 
-   for i, histogram in enumerate(histograms):
-      row = i // 3
-      col = i % 3
-      ax[row][col].step(histogram[1][:-1], histogram[0])
+   dribose_x_hist = np.histogram(np.radians(dribose_angle_x), bins='auto', density=True)
+   dribose_y_hist = np.histogram(np.radians(dribose_angle_y), bins='auto', density=True)
+   dribose_z_hist = np.histogram(np.radians(dribose_angle_z), bins='auto', density=True)
+
+   lribose_x_hist = np.histogram(np.radians(lribose_angle_x), bins='auto', density=True)
+   lribose_y_hist = np.histogram(np.radians(lribose_angle_y), bins='auto', density=True)
+   lribose_z_hist = np.histogram(np.radians(lribose_angle_z), bins='auto', density=True)
+
+   ax[0].step(dribose_x_hist[1][0:-1],dribose_x_hist[0], label='x rotation')
+   ax[0].step(dribose_y_hist[1][0:-1],dribose_y_hist[0], label='y rotation')
+   ax[0].step(dribose_z_hist[1][0:-1],dribose_z_hist[0], label='z rotation')
+   ax[0].legend()
+
+
+   ax[1].step(lribose_x_hist[1][0:-1],lribose_x_hist[0], label='x rotation')
+   ax[1].step(lribose_y_hist[1][0:-1],lribose_y_hist[0], label='y rotation')
+   ax[1].step(lribose_z_hist[1][0:-1],lribose_z_hist[0], label='z rotation')
+   ax[1].legend()
 
    plt.show()
+
+
+def rotational_order(lconc, nsims, filepath):
+    pass
 
 compute_angles(32,2,'.')
 

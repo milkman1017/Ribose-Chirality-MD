@@ -152,8 +152,6 @@ def compute_angles(lconc, nsims, filepath):
 
    plt.show()
 
-
-
 def rotational_order(lconc, nsims, filepath):
     pass
 

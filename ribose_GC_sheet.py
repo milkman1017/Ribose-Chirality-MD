@@ -104,7 +104,7 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def make_sheet_random(height, width, tops, poss,
-                      model, lconc, step=5, mindist=2.0):
+                      model, lconc, step=5):
     """Creates an evenly spaced sheet of molecules randomly picked from given list
         and attaches it to openmm modeler.
     Gives molecule random rotation.
@@ -116,7 +116,7 @@ def make_sheet_random(height, width, tops, poss,
     pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
     model  (openmm.modeler)
     (step) (int) - space between each molecule in sheet
-    
+
     Returns
     =======
     index_coords (list) - (starting index, ending index) of sheet in modeler"""
@@ -129,24 +129,22 @@ def make_sheet_random(height, width, tops, poss,
     idx = np.array(idx)
 
     # precalculate random variables
-    xpos = (np.tile(np.arange(0, width), height)*(step) -
-            np.random.uniform(-(step-mindist), 0, size=height*width)).flatten()
-    ypos = (np.repeat(np.arange(0, height), width)*(step) -
-            np.random.uniform(-(step-mindist), 0, size=height*width)).flatten()
+    xpos = (np.tile(np.arange(0, width), height)*step -
+            np.random.uniform(-1, 1, size=height*width))
+    ypos = (np.repeat(np.arange(0, height), width)*step -
+            np.random.uniform(-1, 1, size=height*width))
+
     z_offset = np.random.uniform(-4.5, 2, size=height*width)
     axis_rotation = np.random.choice(['x', 'y', 'z'], size=height*width)
     angle = np.deg2rad(np.random.randint(0, 360, size=height*width))
 
-    k = 0
-    for i in range(height):
-        for j in range(width):
-            # x axis
-            pos = rotate(poss[idx[k]], angle[k], axis=axis_rotation[k])
-            pos = translate(pos, xpos[k], 'y')
-            pos = translate(pos, ypos[k], 'x')
-            pos = translate(pos, z_offset[k], 'z')
-            model.add(tops[idx[k]], pos)
-            k += 1
+    for k in range(len(idx)):
+        pos = rotate(poss[idx[k]], angle[k], axis=axis_rotation[k])
+        pos = translate(pos, xpos[k], 'y')
+        pos = translate(pos, ypos[k], 'x')
+        pos = translate(pos, z_offset[k], 'z')
+        model.add(tops[idx[k]], pos)
+
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def load_mols(filenames, resnames):

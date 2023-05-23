@@ -136,7 +136,7 @@ def make_sheet_random(height, width, tops, poss,
     z_offset = np.random.uniform(-4.5, 2, size=height*width)
     axis_rotation = np.random.choice(['x', 'y', 'z'], size=height*width)
     angle = np.deg2rad(np.random.randint(0, 360, size=height*width))
-    
+
     k = 0
     for i in range(height):
         for j in range(width):
@@ -245,7 +245,7 @@ def simulate(jobid, device_idx, args):
 
     simulation.minimizeEnergy()
 
-    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
+    # simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
     trajectory = []
 
     model_top = model.getTopology()

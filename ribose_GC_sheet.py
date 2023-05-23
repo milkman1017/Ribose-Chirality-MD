@@ -128,8 +128,8 @@ def make_sheet_random(height, width, tops, poss, model, lconc, step=5, mindist=5
     idx = np.array(idx)
 
     # precalculate random variables
-    xpos = (np.arange(0, width*height)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
-    ypos = (np.arange(0, width*height)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
+    xpos = (np.repeat(np.arange(0, width), height)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
+    ypos = (np.repeat(np.arange(0, height), width)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
     z_offset = np.random.uniform(-4.5, 1, size=height*width)
 
     axis_rotation = np.random.choice(['x','y','z'], size=height*width)

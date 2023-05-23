@@ -103,7 +103,8 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
             xspacing += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def make_sheet_random(height, width, tops, poss, model, lconc, step=5, mindist=5.0):
+def make_sheet_random(height, width, tops, poss,
+                      model, lconc, step=5, mindist=1.0):
     """Creates an evenly spaced sheet of molecules randomly picked from given list
         and attaches it to openmm modeler.
     Gives molecule random rotation.
@@ -128,22 +129,24 @@ def make_sheet_random(height, width, tops, poss, model, lconc, step=5, mindist=5
     idx = np.array(idx)
 
     # precalculate random variables
-    xpos = (np.repeat(np.arange(0, width), height)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
-    ypos = (np.repeat(np.arange(0, height), width)*(step+mindist) - np.random.uniform(-mindist, 0, size=height*width)).flatten()
-    z_offset = np.random.uniform(-4.5, 1, size=height*width)
-
-    axis_rotation = np.random.choice(['x','y','z'], size=height*width)
-    angle = np.deg2rad(np.random.randint(0,360,size=height*width))
+    xpos = (np.tile(np.arange(0, width), height)*(step) -
+            np.random.uniform(-(step-mindist), 0, size=height*width)).flatten()
+    ypos = (np.repeat(np.arange(0, height), width)*(step) -
+            np.random.uniform(-(step-mindist), 0, size=height*width)).flatten()
+    z_offset = np.random.uniform(-4.5, 2, size=height*width)
+    axis_rotation = np.random.choice(['x', 'y', 'z'], size=height*width)
+    angle = np.deg2rad(np.random.randint(0, 360, size=height*width))
+    
     k = 0
     for i in range(height):
-        for j in range(width):    
+        for j in range(width):
             # x axis
             pos = rotate(poss[idx[k]], angle[k], axis=axis_rotation[k])
             pos = translate(pos, xpos[k], 'y')
             pos = translate(pos, ypos[k], 'x')
             pos = translate(pos, z_offset[k], 'z')
             model.add(tops[idx[k]], pos)
-            k+=1
+            k += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def load_mols(filenames, resnames):

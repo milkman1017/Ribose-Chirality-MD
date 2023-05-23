@@ -19,32 +19,32 @@ def rdf(lconc, nsims, filepath):
       for frame in traj:
          for res in frame:
                if res[0] == 'D':
-                  dribose_rdf.append(np.array(frame[res]['positions'])[:, -1])
+                  dribose_rdf.append(np.average(np.array(frame[res]['positions'])[:,-1]))
                if res[0] == 'L':
-                  lribose_rdf.append(np.array(frame[res]['positions'])[:, -1])
+                  lribose_rdf.append(np.average(np.array(frame[res]['positions'])[:, -1]))
+               if res[0] == 'G':
+                   print(np.average(np.array(frame[res]['positions'])[:,-1]))
+                   
 
     #Calculate D-Ribose RDF
-   d_rdf = np.histogram(dribose_rdf, bins='auto', density=True)
+   d_rdf = np.histogram(dribose_rdf, bins='auto')
+   d_gr = d_rdf[0]/((32/(8*8*3))*8*8*(d_rdf[1][1]-d_rdf[1][0]))
+
 
    # Calculate L-Ribose RDF
-   l_rdf = np.histogram(lribose_rdf, bins='auto', density=True)
+   l_rdf = np.histogram(lribose_rdf, bins='auto')
+   l_gr = l_rdf[0]/((32/(8*8*3))*8*8*(l_rdf[1][1]-l_rdf[1][0]))
 
-   fig, ax = plt.subplots(2, 1)
+   fig, ax = plt.subplots()
 
-   ax[0].step(d_rdf[1][0:-1], d_rdf[0])
-   ax[0].set_title('D-Ribose RDF')
-   ax[0].set_xlim([0, 4])
-   ax[0].set_xticks(np.arange(0, 4, 0.5))
+   ax.plot(d_rdf[1][0:-1], d_gr, label='D-Ribose')
+   ax.plot(l_rdf[1][0:-1], l_gr, label='L-Ribose')
+   ax.legend()
 
-   ax[1].set_title('L-Ribose RDF')
-   ax[1].step(l_rdf[1][0:-1], l_rdf[0])
-   ax[1].set_xlim([0, 4])
-   ax[1].set_xticks(np.arange(0, 4, 0.5))
+   print(d_rdf[1][0:-1], d_rdf[0])
 
-   fig.suptitle('Z RDF')
-   fig.supxlabel('Distance Above Sheet (Nanometer)')
-   fig.supylabel('g(r)')
-
+   plt.ylim(0,None)
+   plt.xlim(0,2)
    plt.show()
 
 def compute_2D_rdf(lconc, nsims, filepath):
@@ -139,23 +139,21 @@ def compute_angles(lconc, nsims, filepath):
    lribose_y_hist = np.histogram(np.radians(lribose_angle_y), bins='auto', density=True)
    lribose_z_hist = np.histogram(np.radians(lribose_angle_z), bins='auto', density=True)
 
-   ax[0].step(dribose_x_hist[1][0:-1],dribose_x_hist[0], label='x rotation')
-   ax[0].step(dribose_y_hist[1][0:-1],dribose_y_hist[0], label='y rotation')
-   ax[0].step(dribose_z_hist[1][0:-1],dribose_z_hist[0], label='z rotation')
+   ax[0].plot(dribose_x_hist[1][:-1], dribose_x_hist[0], label='x rotation')
+   ax[0].plot(dribose_y_hist[1][:-1], dribose_y_hist[0], label='y rotation')
+   ax[0].plot(dribose_z_hist[1][:-1], dribose_z_hist[0], label='z rotation')
    ax[0].legend()
 
-
-   ax[1].step(lribose_x_hist[1][0:-1],lribose_x_hist[0], label='x rotation')
-   ax[1].step(lribose_y_hist[1][0:-1],lribose_y_hist[0], label='y rotation')
-   ax[1].step(lribose_z_hist[1][0:-1],lribose_z_hist[0], label='z rotation')
+   ax[1].plot(lribose_x_hist[1][:-1], lribose_x_hist[0], label='x rotation')
+   ax[1].plot(lribose_y_hist[1][:-1], lribose_y_hist[0], label='y rotation')
+   ax[1].plot(lribose_z_hist[1][:-1], lribose_z_hist[0], label='z rotation')
    ax[1].legend()
 
    plt.show()
 
-def rotational_order(lconc, nsims, filepath):
-    pass
+rdf(32,6,'.')
+compute_2D_rdf(32,6,'.')
 
-compute_angles(32,2,'.')
 
 
 

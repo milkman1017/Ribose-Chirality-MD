@@ -104,7 +104,7 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def make_sheet_random(height, width, tops, poss,
-                      model, lconc, step=5):
+                      model, lconc, step=5, mindist=4):
     """Creates an evenly spaced sheet of molecules randomly picked from given list
         and attaches it to openmm modeler.
     Gives molecule random rotation.
@@ -129,10 +129,11 @@ def make_sheet_random(height, width, tops, poss,
     idx = np.array(idx)
 
     # precalculate random variables
+    prange = (step - mindist) / 2
     xpos = (np.tile(np.arange(0, width), height)*step -
-            np.random.uniform(-1, 1, size=height*width))
+            np.random.uniform(-prange, prange, size=height*width))
     ypos = (np.repeat(np.arange(0, height), width)*step -
-            np.random.uniform(-1, 1, size=height*width))
+            np.random.uniform(-prange, prange, size=height*width))
 
     z_offset = np.random.uniform(-4.5, 2, size=height*width)
     axis_rotation = np.random.choice(['x', 'y', 'z'], size=height*width)

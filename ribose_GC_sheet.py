@@ -104,7 +104,7 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
 def make_sheet_random(height, width, tops, poss,
-                      model, lconc, step=5, mindist=1.0):
+                      model, lconc, step=5, mindist=2.0):
     """Creates an evenly spaced sheet of molecules randomly picked from given list
         and attaches it to openmm modeler.
     Gives molecule random rotation.
@@ -240,12 +240,11 @@ def simulate(jobid, device_idx, args):
     simulation.context.setPositions(model.positions)
     simulation.context.setVelocitiesToTemperature(300*kelvin)
     # save pre-minimized positions as pdb
-    PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"{args.outdir}/preminimized{jobid}.pdb", 'w'))
-
+    # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"{args.outdir}/preminimized{jobid}.pdb", 'w'))
 
     simulation.minimizeEnergy()
 
-    # simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
+    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
     trajectory = []
 
     model_top = model.getTopology()
@@ -269,7 +268,7 @@ def simulate(jobid, device_idx, args):
             frame[resname]['velocities'].append(velocities[atom.index])
 
         trajectory.append(frame)
-    with open(f"{args.outdir}/output{jobid}.json", 'w') as f:
+    with open(f"{args.outdir}/output{jobid}_1m.json", 'w') as f:
         f.write(json.dumps(trajectory))
     
 def main():

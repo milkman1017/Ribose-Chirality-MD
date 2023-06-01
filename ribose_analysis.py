@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm as pbar
 from mpl_toolkits.mplot3d import Axes3D
 from pylab import *
+import ripser
 
 def rdf(lconc, nsims, filepath):
     filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
@@ -126,13 +127,13 @@ def compute_angles(lconc, nsims, filepath):
 
     fig, ax = plt.subplots(2, subplot_kw={'projection': 'polar'})
 
-    dribose_x_hist = np.histogram(np.radians(dribose_angle_x), bins='auto', density=True)
-    dribose_y_hist = np.histogram(np.radians(dribose_angle_y), bins='auto', density=True)
-    dribose_z_hist = np.histogram(np.radians(dribose_angle_z), bins='auto', density=True)
+    dribose_x_hist = np.histogram(np.radians(dribose_angle_x), bins=100, density=True)
+    dribose_y_hist = np.histogram(np.radians(dribose_angle_y), bins=100, density=True)
+    dribose_z_hist = np.histogram(np.radians(dribose_angle_z), bins=100, density=True)
 
-    lribose_x_hist = np.histogram(np.radians(lribose_angle_x), bins='auto', density=True)
-    lribose_y_hist = np.histogram(np.radians(lribose_angle_y), bins='auto', density=True)
-    lribose_z_hist = np.histogram(np.radians(lribose_angle_z), bins='auto', density=True)
+    lribose_x_hist = np.histogram(np.radians(lribose_angle_x), bins=100, density=True)
+    lribose_y_hist = np.histogram(np.radians(lribose_angle_y), bins=100, density=True)
+    lribose_z_hist = np.histogram(np.radians(lribose_angle_z), bins=100, density=True)
 
     ax[0].plot(dribose_x_hist[1][:-1], dribose_x_hist[0], label='x rotation')
     ax[0].plot(dribose_y_hist[1][:-1], dribose_y_hist[0], label='y rotation')
@@ -148,49 +149,78 @@ def compute_angles(lconc, nsims, filepath):
 
 
 def hydrogen_bonds(lconc, nsims, filepath):
-     filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+    
+    donor_labels = set()
+    acceptor_labels = set()
 
-     for filename in pbar(filenames, desc="Loading Data"):
-            # traj is a list of frames
-            # frames are dicts of residues
-            with open(filename) as f:
-                traj = json.load(f)
-            f.close()
-
-            hbonds = traj[-1]['hbonds']
-
-            donor_labels = sorted(set([f"{residue.split('-')[0]}-{atom.split('-')[0]}" for residue, bond in hbonds.items() for atom in bond.keys()]))
-            acceptor_labels = sorted(set([f"{residue.split('-')[1]}-{atom.split('-')[1]}" for residue, bond in hbonds.items() for atom in bond.keys()]))
-
-            bond_matrix = np.zeros((len(donor_labels), len(acceptor_labels)))
-
-            for residue, bond_dict in hbonds.items():
-                donor_residue, acceptor_residue = residue.split('-')
-
-                for atom, count in bond_dict.items():
-                    donor, acceptor = atom.split('-')
-                    donor_label = f"{donor_residue}-{donor}"
-                    acceptor_label = f"{acceptor_residue}-{acceptor}"
-                    donor_index = donor_labels.index(donor_label)
-                    acceptor_index = acceptor_labels.index(acceptor_label)
-                    bond_matrix[donor_index, acceptor_index] += count 
-
-     fig, ax = plt.subplots()
-     im = ax.imshow(bond_matrix, cmap='hot')
-
-     ax.set_xticks(np.arange(len(acceptor_labels)))
-     ax.set_yticks(np.arange(len(donor_labels)))
-     ax.set_xticklabels(acceptor_labels)
-     ax.set_yticklabels(donor_labels)
-
-     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-
-     cbar = ax.figure.colorbar(im, ax=ax)
-
-     ax.set_title('Hydrogen Bond Heatmap')
-
-     plt.show()
+    for filename in pbar(filenames, desc="Loading Data"):
+        with open(filename) as f:
+            traj = json.load(f)
+        
+        hbonds = traj[-1]['hbonds']
 
 
+        for residue, bond_dict in hbonds.items():
+            donor_residue, acceptor_residue = residue.split('-')
+            
+            for atom in bond_dict.keys():
+                donor_labels.add(f"{donor_residue}-{atom.split('-')[0]}")
+                acceptor_labels.add(f"{acceptor_residue}-{atom.split('-')[1]}")
 
-hydrogen_bonds(4,1,'.')
+        f.close()
+    
+    donor_labels = sorted(donor_labels)
+    acceptor_labels = sorted(acceptor_labels, reverse=True)
+    
+    bond_data = np.zeros((len(donor_labels), len(acceptor_labels)))
+
+    for filename in pbar(filenames, desc="Processing Data"):
+        with open(filename) as f:
+            traj = json.load(f)
+        
+        hbonds = traj[-1]['hbonds']
+        
+        for residue, bond_dict in hbonds.items():
+            donor_residue, acceptor_residue = residue.split('-')
+
+            for atom, count in bond_dict.items():
+                donor, acceptor = atom.split('-')
+                donor_label = f"{donor_residue}-{donor}"
+                acceptor_label = f"{acceptor_residue}-{acceptor}"
+                donor_index = donor_labels.index(donor_label)
+                acceptor_index = acceptor_labels.index(acceptor_label)
+                bond_data[donor_index, acceptor_index] += count
+        
+        f.close()
+
+    bond_data = (bond_data - np.mean(bond_data))/np.std(bond_data)
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(bond_data, cmap="hot")
+
+    ax.set_xticks(np.arange(len(acceptor_labels)))
+    ax.set_xlabel('Acceptors')
+    ax.set_yticks(np.arange(len(donor_labels)))
+    ax.set_xticklabels(acceptor_labels)
+    ax.set_yticklabels(donor_labels)
+    ax.set_ylabel('Donors')
+
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+    cbar = ax.figure.colorbar(im, ax=ax)
+
+    ax.set_title('Hydrogen Bond Heatmap')
+
+    plt.show()
+
+    return bond_data
+
+hbonds = hydrogen_bonds(32,10,'.')
+
+def hbond_TDA(hbonds):
+     pass
+     
+
+
+

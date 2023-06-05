@@ -140,7 +140,6 @@ def load_mols(filenames, resnames):
     return mols
 
 def simulate(jobid, device_idx, current_z_target, args):
-    print(device_idx)
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 
@@ -161,9 +160,16 @@ def simulate(jobid, device_idx, current_z_target, args):
     c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
     c = rotate(c, np.deg2rad(180), axis='y')
     c = rotate(c, np.deg2rad(190), axis='x')
+    c = translate(c,1,'z')
+    c = translate(c,4,'x')
+    c = translate(c,4,'y')
     # c = translate(c, 8, 'y')
+
     g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-    g = translate(g, .7, axis='x')
+    g = translate(g, 4.7, axis='x')
+    g = translate(g, 4, 'y')
+    g = translate(g, 1, 'z')
+
 
     # initializing the modeler requires a topology and pos
     # we immediately empty the modeler for use later
@@ -182,8 +188,20 @@ def simulate(jobid, device_idx, current_z_target, args):
         print("Building system:", jobid)
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
     forcefield.registerTemplateGenerator(gaff.generator)
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize = Vec3(3,3,(current_z_target+1))*nanometers)
-    system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=1*nanometer, constraints=HBonds)
+
+    box_size = [
+        Vec3(1.5,0,0),
+        Vec3(0,1.5,0),
+        Vec3(0,0,10)
+    ]
+
+    # Create an emptdy system
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,4))
+    model.topology.setPeriodicBoxVectors(box_size)
+
+    system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=3*angstrom, constraints=HBonds)
+
+    # Add solvent to the system
 
     # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
     sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
@@ -225,7 +243,7 @@ def simulate(jobid, device_idx, current_z_target, args):
     #     f.write(json.dumps(trajectory))
 
 args = parse_args()    
-simulate(1, 0, 3.1, args)
+simulate(1, 0, 20, args)
 'The absolute lowest D ribose can go is 3.1'
 
 # def main():

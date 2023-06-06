@@ -139,18 +139,22 @@ def load_mols(filenames, resnames):
         }
     return mols
 
-def simulate(jobid, device_idx, current_z_target, args):
+def simulate(jobid, device_idx, start_z, end_z, args):
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
+
+    end_z_nm = end_z/10
+
+    target_z = start_z
 
     #generate residue template 
     gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
     #move above and to middle of sheet
-    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], current_z_target, 'z')
+    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target_z, 'z')
     # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'y')
     # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
 
-    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], current_z_target, 'z')
+    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target_z, 'z')
     # al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
     # al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
     if(args.verbose):
@@ -192,16 +196,13 @@ def simulate(jobid, device_idx, current_z_target, args):
     box_size = [
         Vec3(1.5,0,0),
         Vec3(0,1.5,0),
-        Vec3(0,0,10)
+        Vec3(0,0,end_z_nm + 2)
     ]
 
-    # Create an emptdy system
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,4))
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z_nm +2))
     model.topology.setPeriodicBoxVectors(box_size)
 
     system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=3*angstrom, constraints=HBonds)
-
-    # Add solvent to the system
 
     # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
     sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
@@ -243,8 +244,8 @@ def simulate(jobid, device_idx, current_z_target, args):
     #     f.write(json.dumps(trajectory))
 
 args = parse_args()    
-simulate(1, 0, 20, args)
-'The absolute lowest D ribose can go is 3.1'
+simulate(1, 0, 4.1, 25, args)
+'The absolute lowest D ribose can go is 4.1'
 
 # def main():
 #     args = parse_args()

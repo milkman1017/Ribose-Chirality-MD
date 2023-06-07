@@ -108,6 +108,9 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
 def spawn_sugar(tops, poss, model, ribose_type):
     sheet_starting_index = model.topology.getNumAtoms()
 
+    poss[0] = translate(poss[0], 2, 'x')
+    poss[0] = translate(poss[0], 2, 'y')
+
     if ribose_type == 'D':
         model.add(tops[0], poss[0])
 
@@ -143,18 +146,18 @@ def simulate(jobid, device_idx, start_z, end_z, args):
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 
-    end_z_nm = end_z/10
+    end_z = end_z/10
 
-    target_z = start_z
+    target = start_z
 
     #generate residue template 
     gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
     #move above and to middle of sheet
-    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target_z, 'z')
+    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target, 'z')
     # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'y')
     # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
 
-    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target_z, 'z')
+    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target, 'z')
     # al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
     # al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
     if(args.verbose):
@@ -196,10 +199,10 @@ def simulate(jobid, device_idx, start_z, end_z, args):
     box_size = [
         Vec3(1.5,0,0),
         Vec3(0,1.5,0),
-        Vec3(0,0,end_z_nm + 2)
+        Vec3(0,0,end_z * 2)
     ]
 
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z_nm +2))
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z +2))
     model.topology.setPeriodicBoxVectors(box_size)
 
     system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=3*angstrom, constraints=HBonds)
@@ -216,7 +219,21 @@ def simulate(jobid, device_idx, start_z, end_z, args):
         for i in range(start, stop):
             sheet_restraint.addParticle(i, model.positions[i])
 
-    integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.001*picoseconds)
+
+    custom_force = CustomExternalForce('j*((x-x)^2+(y-y)^2+(z-target)^2)')
+    system.addForce(custom_force)
+    custom_force.addGlobalParameter("target", 15*nanometer)  
+    custom_force.addGlobalParameter("j", 0.1*kilojoules_per_mole/nanometer**2) 
+    custom_force.addPerParticleParameter('z0')
+    custom_force.addPerParticleParameter('x0')
+    custom_force.addPerParticleParameter('y0')
+
+
+    for start, stop in sugar_indices:
+        for i in range(start, stop):
+            custom_force.addParticle(i, model.positions[i])
+
+    integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.002*picoseconds)
     model.addExtraParticles(forcefield)
     platform = Platform.getPlatformByName('CUDA')
     properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
@@ -231,7 +248,7 @@ def simulate(jobid, device_idx, start_z, end_z, args):
 
     simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
     simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
-        potentialEnergy=True, temperature=True))
+        potentialEnergy=True, temperature=True, speed=True))
     simulation.step(args.nsteps)
 
     # simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
@@ -244,7 +261,7 @@ def simulate(jobid, device_idx, start_z, end_z, args):
     #     f.write(json.dumps(trajectory))
 
 args = parse_args()    
-simulate(1, 0, 4.1, 25, args)
+simulate(1, 0, 5, 25, args)
 'The absolute lowest D ribose can go is 4.1'
 
 # def main():

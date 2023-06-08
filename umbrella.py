@@ -202,10 +202,10 @@ def simulate(jobid, device_idx, start_z, end_z, args):
         Vec3(0,0,end_z * 2)
     ]
 
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z +2))
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z *2))
     model.topology.setPeriodicBoxVectors(box_size)
 
-    system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=3*angstrom, constraints=HBonds)
+    system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
 
     # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
     sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
@@ -219,11 +219,11 @@ def simulate(jobid, device_idx, start_z, end_z, args):
         for i in range(start, stop):
             sheet_restraint.addParticle(i, model.positions[i])
 
-
+    #add in bias potential for umbrella sampling 
     custom_force = CustomExternalForce('j*((x-x)^2+(y-y)^2+(z-target)^2)')
     system.addForce(custom_force)
-    custom_force.addGlobalParameter("target", 15*nanometer)  
-    custom_force.addGlobalParameter("j", 0.1*kilojoules_per_mole/nanometer**2) 
+    custom_force.addGlobalParameter("target", 25*angstrom)  
+    custom_force.addGlobalParameter("j", 10*kilojoules_per_mole/nanometer**2) 
     custom_force.addPerParticleParameter('z0')
     custom_force.addPerParticleParameter('x0')
     custom_force.addPerParticleParameter('y0')

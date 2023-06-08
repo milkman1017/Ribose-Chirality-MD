@@ -18,6 +18,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 import json
 from simtk.openmm import app
+import random as random
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -108,14 +109,17 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
 def spawn_sugar(tops, poss, model, ribose_type):
     sheet_starting_index = model.topology.getNumAtoms()
 
-    poss[0] = translate(poss[0], 2, 'x')
-    poss[0] = translate(poss[0], 2, 'y')
-
     if ribose_type == 'D':
-        model.add(tops[0], poss[0])
+        topology, positions = tops[0], poss[0]
+    elif ribose_type == 'L':
+        topology, positions = tops[1], poss[1]
 
-    if ribose_type == 'L':
-        model.add(tops[1], poss[1])
+    #randomly set the initial x, y coords for ribose
+    positions = translate(positions, random.uniform(0.5, 14.5),'x')
+    positions = translate(positions, random.uniform(0.5, 14.5),'y')
+    positions = rotate(positions, np.deg2rad(np.random.randint(0, 360)), np.random.choice(['x', 'y', 'z']))
+
+    model.add(topology, positions)
 
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
@@ -142,128 +146,175 @@ def load_mols(filenames, resnames):
         }
     return mols
 
-def simulate(jobid, device_idx, start_z, end_z, args):
-    mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
-                    ['DRIB', 'LRIB', 'GUA', "CYT"])
-
-    end_z = end_z/10
-
+def simulate(jobid, device_idx, start_z, end_z, dz, args):
+    
     target = start_z
+    umbrella_data = dict()
+    # umbrella_data['time'] = dict()
 
-    #generate residue template 
-    gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
-    #move above and to middle of sheet
-    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target, 'z')
-    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'y')
-    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
+    while target < end_z:
+        replicate = 1
+        replicate_data = []
 
-    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target, 'z')
-    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
-    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
-    if(args.verbose):
-        print("Building molecules:", jobid)
+        target_name = f'{target}_nm'
 
-    #line up the guanine and cytosines so that the molecules face eachother
-    c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
-    c = rotate(c, np.deg2rad(180), axis='y')
-    c = rotate(c, np.deg2rad(190), axis='x')
-    c = translate(c,1,'z')
-    c = translate(c,4,'x')
-    c = translate(c,4,'y')
-    # c = translate(c, 8, 'y')
+        if (target_name not in umbrella_data.keys()):
+            umbrella_data[target_name] = dict()
+            umbrella_data[target_name]['average_heights'] = []
 
-    g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-    g = translate(g, 4.7, axis='x')
-    g = translate(g, 4, 'y')
-    g = translate(g, 1, 'z')
+        while replicate <= args.nsims:
+            print(f'This is replicate {replicate} of target height {target} nm')
 
+            mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
+                            ['DRIB', 'LRIB', 'GUA', "CYT"])
 
-    # initializing the modeler requires a topology and pos
-    # we immediately empty the modeler for use later
+            #generate residue template 
+            gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
 
-    model = Modeller(mols["guanine"]["topology"], g) 
-    model.delete(model.topology.atoms())
+            #move ribose to target height 
+            ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target*10, 'z')
+            al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target*10, 'z')
 
-    #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
-    sheet_indices = []
-    sugar_indices = []
+            if(args.verbose):
+                print("Building molecules:", jobid)
 
-    sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+            #line up the guanine and cytosines so that the molecules face eachother
+            c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
+            c = rotate(c, np.deg2rad(180), axis='y')
+            c = rotate(c, np.deg2rad(190), axis='x')
+            c = translate(c,1,'z')
+            c = translate(c,4,'x')
+            c = translate(c,4,'y')
+            # c = translate(c, 8, 'y')
 
-    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, 'D'))
-    if(args.verbose):
-        print("Building system:", jobid)
-    forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
-    forcefield.registerTemplateGenerator(gaff.generator)
+            g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
+            g = translate(g, 4.7, axis='x')
+            g = translate(g, 4, 'y')
+            g = translate(g, 1, 'z')
 
-    box_size = [
-        Vec3(1.5,0,0),
-        Vec3(0,1.5,0),
-        Vec3(0,0,end_z * 2)
-    ]
-
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z *2))
-    model.topology.setPeriodicBoxVectors(box_size)
-
-    system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
-
-    # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
-    sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
-    system.addForce(sheet_restraint)
-    sheet_restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
-    sheet_restraint.addPerParticleParameter('x0')
-    sheet_restraint.addPerParticleParameter('y0')
-    sheet_restraint.addPerParticleParameter('z0')
-
-    for start, stop in sheet_indices:
-        for i in range(start, stop):
-            sheet_restraint.addParticle(i, model.positions[i])
-
-    #add in bias potential for umbrella sampling 
-    custom_force = CustomExternalForce('j*((x-x)^2+(y-y)^2+(z-target)^2)')
-    system.addForce(custom_force)
-    custom_force.addGlobalParameter("target", 25*angstrom)  
-    custom_force.addGlobalParameter("j", 10*kilojoules_per_mole/nanometer**2) 
-    custom_force.addPerParticleParameter('z0')
-    custom_force.addPerParticleParameter('x0')
-    custom_force.addPerParticleParameter('y0')
+            # initializing the modeler requires a topology and pos
+            # we immediately empty the modeler for use later
 
 
-    for start, stop in sugar_indices:
-        for i in range(start, stop):
-            custom_force.addParticle(i, model.positions[i])
+            model = Modeller(mols["guanine"]["topology"], g) 
+            model.delete(model.topology.atoms())
 
-    integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.002*picoseconds)
-    model.addExtraParticles(forcefield)
-    platform = Platform.getPlatformByName('CUDA')
-    properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
+            #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
+            sheet_indices = []
+            sugar_indices = []
 
-    simulation = Simulation(model.topology, system, integrator, platform, properties)
-    simulation.context.setPositions(model.positions)
-    simulation.context.setVelocitiesToTemperature(300*kelvin)
-    # save pre-minimized positions as pdb
-    PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open("pre_energy_min.pdb", 'w'))
+            sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-    simulation.minimizeEnergy()
 
-    simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
-    simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
-        potentialEnergy=True, temperature=True, speed=True))
-    simulation.step(args.nsteps)
+            sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, 'D'))
+            if(args.verbose):
+                print("Building system:", jobid)
+            forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
+            forcefield.registerTemplateGenerator(gaff.generator)
 
-    # simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
+            box_size = [
+                Vec3(1.5,0,0),
+                Vec3(0,1.5,0),
+                Vec3(0,0,end_z + 10)
+            ]
 
-    # trajectory = []
+            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 10 ))
+            model.topology.setPeriodicBoxVectors(box_size)
 
-    # trajectory.append(simulation.reporters.append(StateDataReporter(potentialEnergy=True)))
-          
-    # with open(f'{args.outdir}/umbrella-{current_z_target}_job{jobid}.json', 'w') as f:
-    #     f.write(json.dumps(trajectory))
+            system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
+
+            # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
+            sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
+            system.addForce(sheet_restraint)
+            sheet_restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
+            sheet_restraint.addPerParticleParameter('x0')
+            sheet_restraint.addPerParticleParameter('y0')
+            sheet_restraint.addPerParticleParameter('z0')
+
+            for start, stop in sheet_indices:
+                for i in range(start, stop):
+                    sheet_restraint.addParticle(i, model.positions[i])
+
+            #add in bias potential for umbrella sampling 
+            custom_force = CustomExternalForce('j*((x-x)^2+(y-y)^2+(z-target)^2)')
+            system.addForce(custom_force)
+            custom_force.addGlobalParameter("target", target*nanometer)  
+            custom_force.addGlobalParameter("j", 500*kilojoules_per_mole/nanometer**2) 
+            custom_force.addPerParticleParameter('z0')
+            custom_force.addPerParticleParameter('x0')
+            custom_force.addPerParticleParameter('y0')
+
+            for start, stop in sugar_indices:
+                for i in range(start, stop):
+                    custom_force.addParticle(i, model.positions[i])
+
+            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.002*picoseconds)
+            model.addExtraParticles(forcefield)
+            platform = Platform.getPlatformByName('CUDA')
+            properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
+
+            simulation = Simulation(model.topology, system, integrator, platform, properties)
+            simulation.context.setPositions(model.positions)
+            simulation.context.setVelocitiesToTemperature(300*kelvin)
+            # save pre-minimized positions as pdb
+            # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open("pre_energy_min.pdb", 'w'))
+
+            simulation.minimizeEnergy()
+
+            simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
+
+            simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
+                potentialEnergy=True, temperature=True, speed=True, time=True))
+            
+            model_top = model.getTopology()
+            for step in range(0,args.nsteps, args.report):
+                simulation.step(args.report)
+                state = simulation.context.getState(getPositions=True)
+                positions = state.getPositions(asNumpy=True).tolist()
+                frame = dict()
+                frame['residues'] = dict()
+
+                for atom in model_top.atoms():
+                    resname = atom.residue.name 
+                    if ('HOH' in resname) or ('GUA' in resname) or ('CYT' in resname):
+                        continue 
+                    if (resname not in frame['residues'].keys()):
+                        frame['residues'][resname]=dict()
+                        frame['residues'][resname]['height'] = []
+                    
+                    frame['residues'][resname]['height'].append(positions[atom.index][2])
+                umbrella_data[target_name]['average_heights'].append(np.average(frame['residues']['DRIB']['height']))
+            replicate += 1
+        target += dz
+
+    with open(f'{args.outdir}/umbrella.json', 'w') as f:
+        f.write(json.dumps(umbrella_data))
 
 args = parse_args()    
-simulate(1, 0, 5, 25, args)
-'The absolute lowest D ribose can go is 4.1'
+simulate(1, 0, 0.5, 1.5, 0.02, args)
+'The absolute lowest D ribose can go is .45'
 
+def histogram():
+    with open('umbrella.json') as f:
+        traj = json.load(f)
+
+    hist_bins = []
+    hist_counts = []
+    for target in traj:
+        heights = traj[target]['average_heights']
+        counts, bins = np.histogram(heights)
+        hist_bins.append(bins)
+        hist_counts.append(counts)
+
+    fig, ax = plt.subplots()
+
+    i = 0
+    while i < len(hist_bins):
+        plt.plot(hist_bins[i][0:-1], hist_counts[i])
+        i += 1
+    
+    plt.show()
+histogram()
 
 # def main():
 #     args = parse_args()

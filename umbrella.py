@@ -20,6 +20,8 @@ import json
 from simtk.openmm import app
 import random as random
 
+from WHAM import * 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--nprocs', type=int, default=8, help='number of simultaneously processes to use')
@@ -215,10 +217,10 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             box_size = [
                 Vec3(1.5,0,0),
                 Vec3(0,1.5,0),
-                Vec3(0,0,end_z + 10)
+                Vec3(0,0,end_z + 3)
             ]
 
-            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 10 ))
+            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 3 ))
             model.topology.setPeriodicBoxVectors(box_size)
 
             system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
@@ -261,7 +263,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
             simulation.minimizeEnergy()
 
-            simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
+            # simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
 
             simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
                 potentialEnergy=True, temperature=True, speed=True, time=True))
@@ -291,7 +293,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
         f.write(json.dumps(umbrella_data))
 
 args = parse_args()    
-simulate(1, 0, 0.5, 1.5, 0.02, args)
+# simulate(1, 0, 0.5, 1.1, 0.03, args)
 'The absolute lowest D ribose can go is .45'
 
 def histogram():
@@ -302,7 +304,7 @@ def histogram():
     hist_counts = []
     for target in traj:
         heights = traj[target]['average_heights']
-        counts, bins = np.histogram(heights)
+        counts, bins = np.histogram(heights, bins='auto')
         hist_bins.append(bins)
         hist_counts.append(counts)
 

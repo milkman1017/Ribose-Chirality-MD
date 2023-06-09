@@ -6,17 +6,30 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm as pbar
 from mpl_toolkits.mplot3d import Axes3D
 from pylab import *
-import ripser
+import configparser
+from sys import argv
+from multiprocessing import Process
 
-def rdf(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+def fetch_data(filepath):
+    filenames = glob.glob(filepath)
+    trajs = []
+    for filename in pbar(filenames, desc="Loading Data"):
+       with open(filename) as f:
+            trajs.append(json.load(f))
+       f.close()
+    return np.array(trajs)
 
+
+def parse_config(config_file):
+    config = configparser.ConfigParser()
+    config.read(config_file)
+    return config
+
+
+def rdf(trajs, savepath):
     dribose_rdf = []
     lribose_rdf = []
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        f.close()
+    for traj in trajs:
         for frame in traj:
             for res in frame:
                     if res[0] == 'D':
@@ -27,7 +40,6 @@ def rdf(lconc, nsims, filepath):
      #Calculate D-Ribose RDF
     d_rdf = np.histogram(dribose_rdf, bins='auto')
     d_gr = d_rdf[0]/((32/(8*8*3))*8*8*(d_rdf[1][1]-d_rdf[1][0]))
-
 
     # Calculate L-Ribose RDF
     l_rdf = np.histogram(lribose_rdf, bins='auto')
@@ -41,30 +53,23 @@ def rdf(lconc, nsims, filepath):
 
     plt.ylim(0,None)
     plt.xlim(0,2)
-    plt.show()
+    plt.savefig(savepath)
 
-def compute_2D_rdf(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+def heatmap(trajs, savepath):
     dribose_dx = []
     lribose_dx = []
 
     dribose_dy = []
     lribose_dy = []
-
-    for filename in pbar(filenames, desc="Loading Data"):
-            # traj is a list of frames
-            # frames are dicts of residues
-            with open(filename) as f:
-                traj = json.load(f)
-            f.close()
-            for frame in traj:
-                for res in frame:
-                        if res[0] == 'D':
-                            dribose_dx.append(np.array(frame[res]['positions'])[:,0])
-                            dribose_dy.append(np.array(frame[res]['positions'])[:,1])
-                        if res[0] == 'L':
-                            lribose_dx.append(np.array(frame[res]['positions'])[:,0])
-                            lribose_dy.append(np.array(frame[res]['positions'])[:,1])
+    for traj in trajs:
+        for frame in traj:
+            for res in frame:
+                    if res[0] == 'D':
+                        dribose_dx.append(np.array(frame[res]['positions'])[:,0])
+                        dribose_dy.append(np.array(frame[res]['positions'])[:,1])
+                    if res[0] == 'L':
+                        lribose_dx.append(np.array(frame[res]['positions'])[:,0])
+                        lribose_dy.append(np.array(frame[res]['positions'])[:,1])
 
     
     fig, ax = plt.subplots(1,2)
@@ -77,10 +82,9 @@ def compute_2D_rdf(lconc, nsims, filepath):
     ax[1].hist2d(np.array(lribose_dx).flatten(), np.array(lribose_dy).flatten(), bins=500, density=True)
     ax[1].set_title('L-Ribose')
 
-    plt.show()
+    plt.savefig(savepath)
 
-def compute_angles(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[:nsims]
+def compute_angles(trajs, savepath):
 
     dribose_angle_x = []
     dribose_angle_y = []
@@ -95,35 +99,30 @@ def compute_angles(lconc, nsims, filepath):
     z_axis = np.array([0, 0, 1])
 
     angle_lists = [(dribose_angle_x, dribose_angle_y, dribose_angle_z), (lribose_angle_x, lribose_angle_y, lribose_angle_z)]
+    for traj in trajs:
+        for frame in traj:
+            for res in frame:
+                if res[0] in ['D', 'L']:
+                        mol = np.array(frame[res]['positions'])
 
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        
-            for frame in traj:
-                for res in frame:
-                    if res[0] in ['D', 'L']:
-                            mol = np.array(frame[res]['positions'])
+                        centroid = np.average(mol, axis=0)
+                        mol -= centroid
 
-                            centroid = np.average(mol, axis=0)
-                            mol -= centroid
+                        cov_matrix = np.cov(mol, rowvar=False)
 
-                            cov_matrix = np.cov(mol, rowvar=False)
+                        eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
+                        principle_axes = eigenvectors.T
 
-                            eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-                            principle_axes = eigenvectors.T
+                        dot_products = np.dot(principle_axes, [x_axis, y_axis, z_axis])
 
-                            dot_products = np.dot(principle_axes, [x_axis, y_axis, z_axis])
+                        angles = np.degrees(np.arctan2(dot_products[:, 1], dot_products[:, 0]))+180
+                        angle_x, angle_y, angle_z = angles
 
-                            angles = np.degrees(np.arctan2(dot_products[:, 1], dot_products[:, 0]))+180
-                            angle_x, angle_y, angle_z = angles
+                        angle_list = angle_lists[res[0] == 'L']
 
-                            angle_list = angle_lists[res[0] == 'L']
-
-                            angle_list[0].append(angle_x)
-                            angle_list[1].append(angle_y)
-                            angle_list[2].append(angle_z)
-                        
+                        angle_list[0].append(angle_x)
+                        angle_list[1].append(angle_y)
+                        angle_list[2].append(angle_z)
 
     fig, ax = plt.subplots(2, subplot_kw={'projection': 'polar'})
 
@@ -145,40 +144,28 @@ def compute_angles(lconc, nsims, filepath):
     ax[1].plot(lribose_z_hist[1][:-1], lribose_z_hist[0], label='z rotation')
     ax[1].legend()
 
-    plt.show()
+    plt.savefig(savepath)
 
 
-def hydrogen_bonds(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
-    
+def hydrogen_bonds(trajs, filepath):
+
     donor_labels = set()
     acceptor_labels = set()
 
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
+    hbonds = trajs[0][-1]['hbonds']
+    for residue, bond_dict in hbonds.items():
+        donor_residue, acceptor_residue = residue.split('-')
         
-        hbonds = traj[-1]['hbonds']
+        for atom in bond_dict.keys():
+            donor_labels.add(f"{donor_residue}-{atom.split('-')[0]}")
+            acceptor_labels.add(f"{acceptor_residue}-{atom.split('-')[1]}")
 
-
-        for residue, bond_dict in hbonds.items():
-            donor_residue, acceptor_residue = residue.split('-')
-            
-            for atom in bond_dict.keys():
-                donor_labels.add(f"{donor_residue}-{atom.split('-')[0]}")
-                acceptor_labels.add(f"{acceptor_residue}-{atom.split('-')[1]}")
-
-        f.close()
-    
     donor_labels = sorted(donor_labels)
     acceptor_labels = sorted(acceptor_labels, reverse=True)
     
     bond_data = np.zeros((len(donor_labels), len(acceptor_labels)))
 
-    for filename in pbar(filenames, desc="Processing Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        
+    for traj in pbar(trajs, desc="Processing Data"):
         hbonds = traj[-1]['hbonds']
         
         for residue, bond_dict in hbonds.items():
@@ -212,15 +199,42 @@ def hydrogen_bonds(lconc, nsims, filepath):
 
     ax.set_title('Hydrogen Bond Heatmap')
 
-    plt.show()
+    plt.savefig(filepath)
 
     return bond_data
 
-hbonds = hydrogen_bonds(32,10,'.')
 
-def hbond_TDA(hbonds):
-     pass
-     
+def main():
+    if(len(argv) < 2):
+        print("Using default config file config.ini")
+        config = parse_config('config.ini')
+    else:
+        config = parse_config(argv[1])
 
+    section = "Analysis"
+    if(config.getboolean(section,'verbose')):
+        for key in config[section]:
+            print(f"{key} = {config[section][key]}")
+    
+    trajs = fetch_data(f"{config[section]['path']}/{config[section]['lconc']}/*.json")
+    
+    funcs = {
+        "hbonds": hydrogen_bonds,
+        "rdf": rdf,
+        "angles": compute_angles,
+        "heatmap": heatmap
+    }
+    processes = []
+    # use multiprocessing to run each analysis in parallel
+    for key in config[section]:
+        if(config.getboolean(section, key)) and (key in funcs.keys()):
+            print(f"Running {key} analysis")
+            p = Process(funcs[key](trajs, f"{config[section]['savepath']}/{config[section]['lconc']}/{key}.png"))
+            processes.append(p)
+            p.start()
 
-
+    # wait for processes to complete
+    for p in processes:
+        p.join()
+if __name__ == "__main__":
+    main()

@@ -291,7 +291,7 @@ def simulate(jobid, device_idx, args):
         if step == (args.nsteps - args.report):
             frame['hbonds'] = hbond_dict
 
-            trajectory.append(frame)
+        trajectory.append(frame)
           
     with open(f"{args.outdir}/output{jobid}_1m.json", 'w') as f:
         f.write(json.dumps(trajectory))

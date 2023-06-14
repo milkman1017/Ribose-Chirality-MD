@@ -18,6 +18,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 import json
 from simtk.openmm import app
+import time
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -174,7 +175,10 @@ def load_mols(filenames, resnames):
 
 
 def simulate(jobid, device_idx, args):
-    print(device_idx)
+
+    # multipricessing causes random number generator to be seeded with same number
+    # set the seed to prevent this
+    np.random.seed(jobid * time.time() * 1000)
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 
@@ -310,7 +314,7 @@ def main():
         while jobs < total_sims:
             if(len(processes) < proc):
                 print("Starting process", jobs)
-                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
+                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args)
                 p.start()
                 processes.append(p)
                 jobs += 1

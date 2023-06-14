@@ -240,7 +240,7 @@ def simulate(jobid, device_idx, args):
     simulation.context.setPositions(model.positions)
     simulation.context.setVelocitiesToTemperature(300*kelvin)
     # save pre-minimized positions as pdb
-    # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open("pre_energy_min.pdb", 'w'))
+    PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"pre_energy_min_{jobid}.pdb", 'w'))
 
     simulation.minimizeEnergy()
 

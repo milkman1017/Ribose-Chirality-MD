@@ -180,7 +180,6 @@ def simulate(jobid, device_idx, args):
     # set the seed to prevent this
     seed = int((time.time() * 1000 * (jobid+1)) % (2**32 - 1))
     np.random.seed(seed)
-    print(seed)
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 
@@ -217,7 +216,7 @@ def simulate(jobid, device_idx, args):
     sheet_indices.append(make_sheet(args.sh, args.sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
 
-    make_sheet_random(args.sh, args.sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args.lconc, step=8)
+    make_sheet_random(args.sh, args.sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args.lconc, step=12, mindist=5)
     if(args.verbose):
         print("Building system:", jobid)
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
@@ -315,7 +314,6 @@ def main():
     with tqdm(total=total_sims) as pbar:
         while jobs < total_sims:
             if(len(processes) < proc):
-                print("Starting process", jobs)
                 p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
                 p.start()
                 processes.append(p)

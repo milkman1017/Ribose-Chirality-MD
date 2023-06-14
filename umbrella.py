@@ -300,8 +300,32 @@ def wham():
         res_traj = traj.atom_slice(res_indicies)
         com = md.compute_center_of_mass(res_traj)
         z_coordinates=com[:,2]
-        np.savetxt(f'.com_heights{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+        np.savetxt(f'com_heights{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+
+
+    heights = []
+    num_conf = []
+
+    for height_index in target_list:
+        height = np.loadtxt(f'com_heights{np.round(height,3)}.csv', delimiter = ',')
+        heights.append(height)
+        num_conf.append(len(height))
+
+    heights = np.concatenate(heights)
+    num_conf = np.array(num_conf).astype(np.float64)
+    N = len(heights)
+    
+    ##compute reduces energy matrix
+    A = np.zeros((len(target_list),N))
+
+
+
+
+
 wham()
+
+
+
 'The absolute lowest D ribose can go is .45'
     
 #WHAM it up (it up!)

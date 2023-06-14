@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors
 import mdtraj as md
 import argparse
 import multiprocessing as mp
@@ -19,8 +20,8 @@ from tqdm import tqdm
 import json
 from simtk.openmm import app
 import random as random
-
-from WHAM import * 
+import scipy.optimize as optim
+from FastMBAR import *
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -34,7 +35,7 @@ def parse_args():
     parser.add_argument('--height_start', type=int, default=1, help='starting target z coordinate for umbrella sampling')
     parser.add_argument('--height_end', type=int, default=10, help='ending z coordinate for umbrella sampling')
     parser.add_argument('--z_increment', type=int, default=0.5, help='how much to increase the target z coordinate for each umbrella')
-    parser.add_argument('--ribose', choices=['D','L','both'], help='chose which ribose to simulate: D, L, or one of each')
+    parser.add_argument('--ribose', choices=['D','L','both'], default='D', help='chose which ribose to simulate: D, L, or one of each')
     args = parser.parse_args()
     return args
 
@@ -149,23 +150,22 @@ def load_mols(filenames, resnames):
     return mols
 
 def simulate(jobid, device_idx, start_z, end_z, dz, args):
-    
+    target=start_z
+
+    target_list = []
+    while target < end_z:
+        target_list.append(target)
+        target += dz
+
     target = start_z
-    umbrella_data = dict()
-    # umbrella_data['time'] = dict()
 
     while target < end_z:
         replicate = 1
-        replicate_data = []
-
-        target_name = f'{target}_nm'
-
-        if (target_name not in umbrella_data.keys()):
-            umbrella_data[target_name] = dict()
-            umbrella_data[target_name]['average_heights'] = []
 
         while replicate <= args.nsims:
             print(f'This is replicate {replicate} of target height {target} nm')
+           
+            np.savetxt('heights.csv', target_list, delimiter = ',')
 
             mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                             ['DRIB', 'LRIB', 'GUA', "CYT"])
@@ -250,7 +250,9 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
                 for i in range(start, stop):
                     custom_force.addParticle(i, model.positions[i])
 
-            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.002*picoseconds)
+            stepsize = 0.002*picoseconds
+
+            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, stepsize)
             model.addExtraParticles(forcefield)
             platform = Platform.getPlatformByName('CUDA')
             properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
@@ -269,54 +271,44 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
                 potentialEnergy=True, temperature=True, speed=True, time=True))
             
             model_top = model.getTopology()
+            file_handle = open(f"traj_{np.round(target,3)}.dcd", 'bw')
+            dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
             for step in range(0,args.nsteps, args.report):
                 simulation.step(args.report)
                 state = simulation.context.getState(getPositions=True)
-                positions = state.getPositions(asNumpy=True).tolist()
-                frame = dict()
-                frame['residues'] = dict()
-
-                for atom in model_top.atoms():
-                    resname = atom.residue.name 
-                    if ('HOH' in resname) or ('GUA' in resname) or ('CYT' in resname):
-                        continue 
-                    if (resname not in frame['residues'].keys()):
-                        frame['residues'][resname]=dict()
-                        frame['residues'][resname]['height'] = []
-                    
-                    frame['residues'][resname]['height'].append(positions[atom.index][2])
-                umbrella_data[target_name]['average_heights'].append(np.average(frame['residues']['DRIB']['height']))
+                positions = state.getPositions()
+                dcd_file.writeModel(positions)
+            file_handle.close()
             replicate += 1
         target += dz
 
-    with open(f'{args.outdir}/umbrella.json', 'w') as f:
-        f.write(json.dumps(umbrella_data))
+    return model_top, target_list 
 
 args = parse_args()    
-# simulate(1, 0, 0.5, 1.1, 0.03, args)
+
+start_z = 0.55
+end_z = 0.6
+dz = 0.03
+
+model_top, target_list = simulate(1, 0, start_z, end_z, dz, args)
+
+def wham():
+    top = md.Topology.from_openmm(model_top)
+    for height in target_list:
+        traj = md.load_dcd(f'traj_{np.round(height,3)}.dcd', top = top)
+        res_indicies = traj.topology.select('resname "DRIB"')
+        res_traj = traj.atom_slice(res_indicies)
+        com = md.compute_center_of_mass(res_traj)
+        z_coordinates=com[:,2]
+        np.savetxt(f'.com_heights{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+wham()
 'The absolute lowest D ribose can go is .45'
-
-def histogram():
-    with open('umbrella.json') as f:
-        traj = json.load(f)
-
-    hist_bins = []
-    hist_counts = []
-    for target in traj:
-        heights = traj[target]['average_heights']
-        counts, bins = np.histogram(heights, bins='auto')
-        hist_bins.append(bins)
-        hist_counts.append(counts)
-
-    fig, ax = plt.subplots()
-
-    i = 0
-    while i < len(hist_bins):
-        plt.plot(hist_bins[i][0:-1], hist_counts[i])
-        i += 1
     
-    plt.show()
-histogram()
+#WHAM it up (it up!)
+
+
+
+
 
 # def main():
 #     args = parse_args()
@@ -328,13 +320,13 @@ histogram()
 #     height_start = args.height_start
 #     height_end = args.height_end
 #     dz = args.z_increment
-#     current_z = height_start 
+#     target = height_start 
 
 #     while z < height_end:
 #         while jobs < sims:
 #             if len(processes) < proc: 
 #                 print('starting process', jobs)
-#                 p = mp.Process(target=simulate, args=(jobs, (jobs%gpus), current_z, args))
+#                 p = mp.Process(target=simulate, args=(jobs, (jobs%gpus), target, args))
 #                 p.start()
 #                 processes.append(p)
 #         z += dz

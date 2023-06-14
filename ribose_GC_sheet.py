@@ -314,7 +314,7 @@ def main():
         while jobs < total_sims:
             if(len(processes) < proc):
                 print("Starting process", jobs)
-                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args)
+                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
                 p.start()
                 processes.append(p)
                 jobs += 1

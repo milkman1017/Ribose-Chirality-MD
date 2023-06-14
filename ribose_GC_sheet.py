@@ -178,7 +178,9 @@ def simulate(jobid, device_idx, args):
 
     # multipricessing causes random number generator to be seeded with same number
     # set the seed to prevent this
-    np.random.seed(jobid * time.time() * 1000)
+    seed = int((time.time() * 1000 * (jobid+1)) % (2**32 - 1))
+    np.random.seed(seed)
+    print(seed)
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 

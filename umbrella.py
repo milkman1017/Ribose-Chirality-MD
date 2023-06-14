@@ -152,20 +152,21 @@ def load_mols(filenames, resnames):
 def simulate(jobid, device_idx, start_z, end_z, dz, args):
     target=start_z
 
+    topology_list = []
     target_list = []
     while target < end_z:
         target_list.append(target)
         target += dz
 
+    np.savetxt('heights.csv', target_list, delimiter = ',')
     target = start_z
 
     while target < end_z:
         replicate = 1
 
         while replicate <= args.nsims:
-            print(f'This is replicate {replicate} of target height {target} nm')
+            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm')
            
-            np.savetxt('heights.csv', target_list, delimiter = ',')
 
             mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                             ['DRIB', 'LRIB', 'GUA', "CYT"])
@@ -207,7 +208,6 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
             sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-
             sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, 'D'))
             if(args.verbose):
                 print("Building system:", jobid)
@@ -217,10 +217,10 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             box_size = [
                 Vec3(1.5,0,0),
                 Vec3(0,1.5,0),
-                Vec3(0,0,end_z + 3)
+                Vec3(0,0,end_z + 5)
             ]
 
-            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 3 ))
+            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 5 ))
             model.topology.setPeriodicBoxVectors(box_size)
 
             system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
@@ -238,7 +238,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
                     sheet_restraint.addParticle(i, model.positions[i])
 
             #add in bias potential for umbrella sampling 
-            custom_force = CustomExternalForce('j*((x-x)^2+(y-y)^2+(z-target)^2)')
+            custom_force = CustomExternalForce('0.5*j*((x-x)^2+(y-y)^2+(z-target)^2)')
             system.addForce(custom_force)
             custom_force.addGlobalParameter("target", target*nanometer)  
             custom_force.addGlobalParameter("j", 500*kilojoules_per_mole/nanometer**2) 
@@ -261,16 +261,19 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             simulation.context.setPositions(model.positions)
             simulation.context.setVelocitiesToTemperature(300*kelvin)
             # save pre-minimized positions as pdb
-            # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open("pre_energy_min.pdb", 'w'))
 
             simulation.minimizeEnergy()
 
-            # simulation.reporters.append(PDBReporter('umbrella.pdb', args.report))
+            PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
+            simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
 
             simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
                 potentialEnergy=True, temperature=True, speed=True, time=True))
             
+            #need to store the topologies because every sim has a slighlty different number of waters
             model_top = model.getTopology()
+            topology_list.append(model_top)
+
             file_handle = open(f"traj_{np.round(target,3)}.dcd", 'bw')
             dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
             for step in range(0,args.nsteps, args.report):
@@ -282,32 +285,31 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             replicate += 1
         target += dz
 
-    return model_top, target_list 
+    return model_top, target_list, topology_list
 
 args = parse_args()    
 
-start_z = 0.55
-end_z = 0.6
-dz = 0.03
+start_z = 0.50
+end_z = 5
+dz = 0.025
 
-model_top, target_list = simulate(1, 0, start_z, end_z, dz, args)
+model_top, target_list, topology_list = simulate(1, 0, start_z, end_z, dz, args)
 
 def wham():
-    top = md.Topology.from_openmm(model_top)
-    for height in target_list:
+    for i, height in enumerate(target_list):
+        top = md.Topology.from_openmm(topology_list[i])
         traj = md.load_dcd(f'traj_{np.round(height,3)}.dcd', top = top)
         res_indicies = traj.topology.select('resname "DRIB"')
         res_traj = traj.atom_slice(res_indicies)
         com = md.compute_center_of_mass(res_traj)
         z_coordinates=com[:,2]
-        np.savetxt(f'com_heights{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
-
+        np.savetxt(f'com_heights_{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
 
     heights = []
     num_conf = []
 
     for height_index in target_list:
-        height = np.loadtxt(f'com_heights{np.round(height,3)}.csv', delimiter = ',')
+        height = np.loadtxt(f'com_heights_{np.round(height_index,3)}.csv', delimiter = ',')
         heights.append(height)
         num_conf.append(len(height))
 
@@ -315,12 +317,44 @@ def wham():
     num_conf = np.array(num_conf).astype(np.float64)
     N = len(heights)
     
-    ##compute reduces energy matrix
+    ##compute reduced energy matrix A
     A = np.zeros((len(target_list),N))
+    K = 500
+    T = 300 * kelvin
+    kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
+    kbT = kbT.value_in_unit(kilojoule_per_mole)
 
+    height_0 = np.loadtxt('heights.csv', delimiter=',')
 
+    for height_index in range(len(target_list)):
+        current_height = height_0[height_index]
+        diff = np.abs(heights - current_height)
+        diff = np.minimum(diff, 2*np.pi -diff)
+        A[height_index,:] = 0.5*K*diff**2/kbT
+    
+    fastmbar = FastMBAR(energy=A, num_conf=num_conf, cuda=False, verbose=True)
+    
+    #compute reduced energy matrix B
+    L = len(target_list)
+    height_PMF = np.linspace(start_z, end_z, L, endpoint=False)
+    width = (end_z-start_z)/L
+    B = np.zeros((L,N))
 
+    for i in range(L):
+        height_center = height_PMF[i]
+        height_low = height_center - 0.5*width
+        height_high = height_center + 0.5*width
 
+        indicator = ((heights > height_low) & (heights <= height_high)) | \
+            ((heights + (height_high - height_low) > height_low) & (heights + (height_high - height_low) <= height_high)) | \
+            ((heights - (height_high - height_low) > height_low) & (heights - (height_high - height_low) <= height_high))
+
+        B[i,~indicator] = np.inf
+    calc_PMF, _ = fastmbar.calculate_free_energies_of_perturbed_states(B)
+
+    fig, ax = plt.subplots()
+    ax.plot(height_PMF, calc_PMF)
+    plt.show()
 
 wham()
 

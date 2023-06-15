@@ -241,7 +241,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             custom_force = CustomExternalForce('0.5*j*((x-x)^2+(y-y)^2+(z-target)^2)')
             system.addForce(custom_force)
             custom_force.addGlobalParameter("target", target*nanometer)  
-            custom_force.addGlobalParameter("j", 500*kilojoules_per_mole/nanometer**2) 
+            custom_force.addGlobalParameter("j", 1000*kilojoules_per_mole/nanometer**2) 
             custom_force.addPerParticleParameter('z0')
             custom_force.addPerParticleParameter('x0')
             custom_force.addPerParticleParameter('y0')
@@ -325,7 +325,7 @@ def wham(ribose_type):
     
     ##compute reduced energy matrix A
     A = np.zeros((len(target_list),N))
-    K = 500
+    K = 1000
     T = 300 * kelvin
     kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)

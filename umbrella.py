@@ -32,10 +32,10 @@ def parse_args():
     parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
     parser.add_argument('--report', type=int, default=500, help='report interval')
     parser.add_argument('--verbose', action='store_true', help='print verbose output')
-    parser.add_argument('--height_start', type=int, default=1, help='starting target z coordinate for umbrella sampling')
-    parser.add_argument('--height_end', type=int, default=10, help='ending z coordinate for umbrella sampling')
-    parser.add_argument('--z_increment', type=int, default=0.5, help='how much to increase the target z coordinate for each umbrella')
-    parser.add_argument('--ribose', choices=['D','L','both'], default='D', help='chose which ribose to simulate: D, L, or one of each')
+    parser.add_argument('--start_z', type=float, default=1, help='starting target z coordinate for umbrella sampling')
+    parser.add_argument('--end_z', type=float, default=10, help='ending z coordinate for umbrella sampling')
+    parser.add_argument('--dz', type=float, default=0.5, help='how much to increase the target z coordinate for each umbrella')
+    parser.add_argument('--ribose', choices=['D','L'], default='D', help='chose which ribose to simulate: D, L, or one of each')
     args = parser.parse_args()
     return args
 
@@ -165,7 +165,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
         replicate = 1
 
         while replicate <= args.nsims:
-            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm')
+            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {args.ribose}-ribose')
            
 
             mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
@@ -264,8 +264,8 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
             simulation.minimizeEnergy()
 
-            PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
-            simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
+            # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
+            # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
 
             simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
                 potentialEnergy=True, temperature=True, speed=True, time=True))
@@ -274,7 +274,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             model_top = model.getTopology()
             topology_list.append(model_top)
 
-            file_handle = open(f"traj_{np.round(target,3)}.dcd", 'bw')
+            file_handle = open(f"traj_{np.round(target,3)}_replicate_{replicate}_{args.ribose}.dcd", 'bw')
             dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
             for step in range(0,args.nsteps, args.report):
                 simulation.step(args.report)
@@ -289,27 +289,33 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
 args = parse_args()    
 
-start_z = 0.50
-end_z = 5
-dz = 0.025
 
-model_top, target_list, topology_list = simulate(1, 0, start_z, end_z, dz, args)
+model_top, target_list, topology_list = simulate(1, 0, args.start_z, args.end_z, args.dz, args)
 
-def wham():
-    for i, height in enumerate(target_list):
-        top = md.Topology.from_openmm(topology_list[i])
-        traj = md.load_dcd(f'traj_{np.round(height,3)}.dcd', top = top)
-        res_indicies = traj.topology.select('resname "DRIB"')
-        res_traj = traj.atom_slice(res_indicies)
-        com = md.compute_center_of_mass(res_traj)
-        z_coordinates=com[:,2]
-        np.savetxt(f'com_heights_{np.round(height,3)}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+def write_com():
+    top_index = 0
+    for height in target_list:
+        z_coordinates = []
+        for replicate in range(args.nsims):
+            replicate += 1
+            top = md.Topology.from_openmm(topology_list[top_index])
+            traj = md.load_dcd(f'traj_{np.round(height,3)}_replicate_{replicate}_{args.ribose}.dcd', top = top)
+            res_indicies = traj.topology.select('resname "DRIB"')
+            res_traj = traj.atom_slice(res_indicies)
+            com = md.compute_center_of_mass(res_traj)
+            z_coordinates.append(com[:,2])
+            top_index+=1
+        z_coordinates = np.concatenate(z_coordinates) 
+        np.savetxt(f'com_heights_{np.round(height,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')
 
+write_com()
+
+def wham(ribose_type):
     heights = []
     num_conf = []
 
     for height_index in target_list:
-        height = np.loadtxt(f'com_heights_{np.round(height_index,3)}.csv', delimiter = ',')
+        height = np.loadtxt(f'com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
         heights.append(height)
         num_conf.append(len(height))
 
@@ -336,8 +342,8 @@ def wham():
     
     #compute reduced energy matrix B
     L = len(target_list)
-    height_PMF = np.linspace(start_z, end_z, L, endpoint=False)
-    width = (end_z-start_z)/L
+    height_PMF = np.linspace(args.start_z, args.end_z, L, endpoint=False)
+    width = (args.end_z-args.start_z)/L
     B = np.zeros((L,N))
 
     for i in range(L):
@@ -352,21 +358,10 @@ def wham():
         B[i,~indicator] = np.inf
     calc_PMF, _ = fastmbar.calculate_free_energies_of_perturbed_states(B)
 
-    fig, ax = plt.subplots()
-    ax.plot(height_PMF, calc_PMF)
-    plt.show()
+    return height_PMF, calc_PMF
 
-wham()
-
-
-
-'The absolute lowest D ribose can go is .45'
-    
-#WHAM it up (it up!)
-
-
-
-
+# D_height_PMF, D_calc_PMF = wham('D')
+# L_height_PMF, L_calc_PMF = wham('L')
 
 # def main():
 #     args = parse_args()

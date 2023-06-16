@@ -138,12 +138,12 @@ def compute_angles(lconc, nsims, filepath):
     ax[0].plot(dribose_x_hist[1][:-1], dribose_x_hist[0], label='x rotation')
     ax[0].plot(dribose_y_hist[1][:-1], dribose_y_hist[0], label='y rotation')
     ax[0].plot(dribose_z_hist[1][:-1], dribose_z_hist[0], label='z rotation')
-    ax[0].legend()
+    ax[0].legend(bbox_to_anchor=(1,1))
 
     ax[1].plot(lribose_x_hist[1][:-1], lribose_x_hist[0], label='x rotation')
     ax[1].plot(lribose_y_hist[1][:-1], lribose_y_hist[0], label='y rotation')
     ax[1].plot(lribose_z_hist[1][:-1], lribose_z_hist[0], label='z rotation')
-    ax[1].legend()
+    ax[1].legend(bbox_to_anchor=(1,1))
 
     plt.show()
 

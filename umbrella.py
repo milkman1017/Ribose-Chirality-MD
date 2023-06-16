@@ -8,6 +8,7 @@ from sys import stdout
 from openff.toolkit.topology import Molecule
 from openmmforcefields.generators import GAFFTemplateGenerator
 from openff.units.openmm import to_openmm
+
 import numpy as np
 import matplotlib.pyplot as plt 
 import numpy as np
@@ -38,6 +39,8 @@ def parse_args():
     parser.add_argument('--ribose', choices=['D','L'], default='D', help='chose which ribose to simulate: D, L, or one of each')
     args = parser.parse_args()
     return args
+
+args = parse_args()  
 
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
@@ -167,13 +170,10 @@ def write_com(topology_list, target, args):
         top_index+=1
 
     z_coordinates = np.concatenate(z_coordinates) 
-    np.savetxt(f'com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')
-
-args = parse_args()    
+    np.savetxt(f'com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')  
 
 def simulate(jobid, device_idx, start_z, end_z, dz, args):
     target=start_z
-
 
     target_list = []
     while target < end_z:
@@ -364,18 +364,19 @@ def wham(ribose_type):
 
         B[i,~indicator] = np.inf
     calc_PMF, _ = fastmbar.calculate_free_energies_of_perturbed_states(B)
+    height_PMF -= 0.1
 
     return height_PMF, calc_PMF
 
-# D_height_PMF, D_calc_PMF = wham('D')
-# L_height_PMF, L_calc_PMF = wham('L')
+D_height_PMF, D_calc_PMF = wham('D')
+L_height_PMF, L_calc_PMF = wham('L')
 
-# plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
-# plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
-# plt.xlabel('z coordinate')
-# plt.ylabel('PMF')
-# plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
-# plt.show()
+plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
+plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
+plt.xlabel('z coordinate')
+plt.ylabel('PMF')
+plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
+plt.show()
 
 # def main():
 #     args = parse_args()

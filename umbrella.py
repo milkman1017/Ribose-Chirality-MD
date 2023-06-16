@@ -149,10 +149,32 @@ def load_mols(filenames, resnames):
         }
     return mols
 
+def write_com(topology_list, target, args):
+    top_index = 0
+    z_coordinates = []
+
+    for replicate in range(args.nsims):
+        replicate += 1
+        top = md.Topology.from_openmm(topology_list[top_index])
+        traj = md.load_dcd(f'traj_{replicate}_{args.ribose}.dcd', top = top)
+
+        res_indicies = traj.topology.select('resname "DRIB"')
+        res_traj = traj.atom_slice(res_indicies)
+
+        com = md.compute_center_of_mass(res_traj)
+
+        z_coordinates.append(com[:,2])
+        top_index+=1
+
+    z_coordinates = np.concatenate(z_coordinates) 
+    np.savetxt(f'com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+
+args = parse_args()    
+
 def simulate(jobid, device_idx, start_z, end_z, dz, args):
     target=start_z
 
-    topology_list = []
+
     target_list = []
     while target < end_z:
         target_list.append(target)
@@ -163,6 +185,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
     while target < end_z:
         replicate = 1
+        topology_list = []
 
         while replicate <= args.nsims:
             print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {args.ribose}-ribose')
@@ -274,7 +297,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             model_top = model.getTopology()
             topology_list.append(model_top)
 
-            file_handle = open(f"traj_{np.round(target,3)}_replicate_{replicate}_{args.ribose}.dcd", 'bw')
+            file_handle = open(f"traj_{replicate}_{args.ribose}.dcd", 'bw')
             dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
             for step in range(0,args.nsteps, args.report):
                 simulation.step(args.report)
@@ -283,36 +306,20 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
                 dcd_file.writeModel(positions)
             file_handle.close()
             replicate += 1
+
+        write_com(topology_list, target, args)
         target += dz
 
     return model_top, target_list, topology_list
 
-args = parse_args()    
 
-
-model_top, target_list, topology_list = simulate(1, 0, args.start_z, args.end_z, args.dz, args)
-
-def write_com():
-    top_index = 0
-    for height in target_list:
-        z_coordinates = []
-        for replicate in range(args.nsims):
-            replicate += 1
-            top = md.Topology.from_openmm(topology_list[top_index])
-            traj = md.load_dcd(f'traj_{np.round(height,3)}_replicate_{replicate}_{args.ribose}.dcd', top = top)
-            res_indicies = traj.topology.select('resname "DRIB"')
-            res_traj = traj.atom_slice(res_indicies)
-            com = md.compute_center_of_mass(res_traj)
-            z_coordinates.append(com[:,2])
-            top_index+=1
-        z_coordinates = np.concatenate(z_coordinates) 
-        np.savetxt(f'com_heights_{np.round(height,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')
-
-write_com()
+simulate(1, 0, args.start_z, args.end_z, args.dz, args)
 
 def wham(ribose_type):
     heights = []
     num_conf = []
+
+    target_list = np.loadtxt('heights.csv', delimiter=',')
 
     for height_index in target_list:
         height = np.loadtxt(f'com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
@@ -362,6 +369,13 @@ def wham(ribose_type):
 
 # D_height_PMF, D_calc_PMF = wham('D')
 # L_height_PMF, L_calc_PMF = wham('L')
+
+# plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
+# plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
+# plt.xlabel('z coordinate')
+# plt.ylabel('PMF')
+# plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
+# plt.show()
 
 # def main():
 #     args = parse_args()

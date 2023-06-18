@@ -112,13 +112,15 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
             xspacing += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def spawn_sugar(tops, poss, model, ribose_type):
+def spawn_sugar(tops, poss, model, args):
     sheet_starting_index = model.topology.getNumAtoms()
 
-    if ribose_type == 'D':
+    if args.ribose == 'D':
         topology, positions = tops[0], poss[0]
-    elif ribose_type == 'L':
+        print('D1')
+    elif args.ribose == 'L':
         topology, positions = tops[1], poss[1]
+        print('L1')
 
     #randomly set the initial x, y coords for ribose
     positions = translate(positions, random.uniform(0.5, 14.5),'x')
@@ -161,7 +163,14 @@ def write_com(topology_list, target, args):
         top = md.Topology.from_openmm(topology_list[top_index])
         traj = md.load_dcd(f'traj_{replicate}_{args.ribose}.dcd', top = top)
 
-        res_indicies = traj.topology.select('resname "DRIB"')
+        if args.ribose == 'D':
+            res_indicies = traj.topology.select('resname "DRIB"')
+            print('D2')
+        elif args.ribose == 'L':
+            res_indicies = traj.topology.select('resname "LRIB"')
+            print('L2')
+
+        print(res_indicies)
         res_traj = traj.atom_slice(res_indicies)
 
         com = md.compute_center_of_mass(res_traj)
@@ -170,7 +179,7 @@ def write_com(topology_list, target, args):
         top_index+=1
 
     z_coordinates = np.concatenate(z_coordinates) 
-    np.savetxt(f'com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')  
+    np.savetxt(f'{args.outdir}/com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')  
 
 def simulate(jobid, device_idx, start_z, end_z, dz, args):
     target=start_z
@@ -180,7 +189,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
         target_list.append(target)
         target += dz
 
-    np.savetxt('heights.csv', target_list, delimiter = ',')
+    np.savetxt(f'{args.outdir}/heights.csv', target_list, delimiter = ',')
     target = start_z
 
     while target < end_z:
@@ -231,7 +240,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
 
             sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-            sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, 'D'))
+            sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args))
             if(args.verbose):
                 print("Building system:", jobid)
             forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
@@ -297,7 +306,7 @@ def simulate(jobid, device_idx, start_z, end_z, dz, args):
             model_top = model.getTopology()
             topology_list.append(model_top)
 
-            file_handle = open(f"traj_{replicate}_{args.ribose}.dcd", 'bw')
+            file_handle = open(f"{args.outdir}/traj_{replicate}_{args.ribose}.dcd", 'bw')
             dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
             for step in range(0,args.nsteps, args.report):
                 simulation.step(args.report)
@@ -319,10 +328,10 @@ def wham(ribose_type):
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt('heights.csv', delimiter=',')
+    target_list = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
 
     for height_index in target_list:
-        height = np.loadtxt(f'com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
+        height = np.loadtxt(f'{args.outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
         heights.append(height)
         num_conf.append(len(height))
 
@@ -337,7 +346,7 @@ def wham(ribose_type):
     kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)
 
-    height_0 = np.loadtxt('heights.csv', delimiter=',')
+    height_0 = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
 
     for height_index in range(len(target_list)):
         current_height = height_0[height_index]

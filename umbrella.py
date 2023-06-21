@@ -33,14 +33,12 @@ def parse_args():
     parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
     parser.add_argument('--report', type=int, default=500, help='report interval')
     parser.add_argument('--verbose', action='store_true', help='print verbose output')
-    parser.add_argument('--start_z', type=float, default=1, help='starting target z coordinate for umbrella sampling')
-    parser.add_argument('--end_z', type=float, default=10, help='ending z coordinate for umbrella sampling')
-    parser.add_argument('--dz', type=float, default=0.5, help='how much to increase the target z coordinate for each umbrella')
+    parser.add_argument('--start_z', type=float, default=0.51, help='starting target z coordinate for umbrella sampling')
+    parser.add_argument('--end_z', type=float, default=1, help='ending z coordinate for umbrella sampling')
+    parser.add_argument('--dz', type=float, default=0.02, help='how much to increase the target z coordinate for each umbrella')
     parser.add_argument('--ribose', choices=['D','L'], default='D', help='chose which ribose to simulate: D, L, or one of each')
     args = parser.parse_args()
     return args
-
-args = parse_args()  
 
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
@@ -181,154 +179,129 @@ def write_com(topology_list, target, args):
     z_coordinates = np.concatenate(z_coordinates) 
     np.savetxt(f'{args.outdir}/com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')  
 
-def simulate(jobid, device_idx, start_z, end_z, dz, args):
-    target=start_z
+def simulate(jobid, device_idx, target, end_z, replicate, args):
 
-    target_list = []
-    while target < end_z:
-        target_list.append(target)
-        target += dz
+    mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
+                    ['DRIB', 'LRIB', 'GUA', "CYT"])
 
-    np.savetxt(f'{args.outdir}/heights.csv', target_list, delimiter = ',')
-    target = start_z
+    #generate residue template 
+    gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
 
-    while target < end_z:
-        replicate = 1
-        topology_list = []
+    #move ribose to target height 
+    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target*10, 'z')
+    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target*10, 'z')
 
-        while replicate <= args.nsims:
-            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {args.ribose}-ribose')
-           
+    if(args.verbose):
+        print("Building molecules:", jobid)
 
-            mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
-                            ['DRIB', 'LRIB', 'GUA', "CYT"])
+    #line up the guanine and cytosines so that the molecules face eachother
+    c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
+    c = rotate(c, np.deg2rad(180), axis='y')
+    c = rotate(c, np.deg2rad(190), axis='x')
+    c = translate(c,1,'z')
+    c = translate(c,4,'x')
+    c = translate(c,4,'y')
+    # c = translate(c, 8, 'y')
 
-            #generate residue template 
-            gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
+    g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
+    g = translate(g, 4.7, axis='x')
+    g = translate(g, 4, 'y')
+    g = translate(g, 1, 'z')
 
-            #move ribose to target height 
-            ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target*10, 'z')
-            al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target*10, 'z')
-
-            if(args.verbose):
-                print("Building molecules:", jobid)
-
-            #line up the guanine and cytosines so that the molecules face eachother
-            c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
-            c = rotate(c, np.deg2rad(180), axis='y')
-            c = rotate(c, np.deg2rad(190), axis='x')
-            c = translate(c,1,'z')
-            c = translate(c,4,'x')
-            c = translate(c,4,'y')
-            # c = translate(c, 8, 'y')
-
-            g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-            g = translate(g, 4.7, axis='x')
-            g = translate(g, 4, 'y')
-            g = translate(g, 1, 'z')
-
-            # initializing the modeler requires a topology and pos
-            # we immediately empty the modeler for use later
+    # initializing the modeler requires a topology and pos
+    # we immediately empty the modeler for use later
 
 
-            model = Modeller(mols["guanine"]["topology"], g) 
-            model.delete(model.topology.atoms())
+    model = Modeller(mols["guanine"]["topology"], g) 
+    model.delete(model.topology.atoms())
 
-            #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
-            sheet_indices = []
-            sugar_indices = []
+    #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
+    sheet_indices = []
+    sugar_indices = []
 
-            sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+    sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-            sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args))
-            if(args.verbose):
-                print("Building system:", jobid)
-            forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
-            forcefield.registerTemplateGenerator(gaff.generator)
+    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args))
+    if(args.verbose):
+        print("Building system:", jobid)
+    forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
+    forcefield.registerTemplateGenerator(gaff.generator)
 
-            box_size = [
-                Vec3(1.5,0,0),
-                Vec3(0,1.5,0),
-                Vec3(0,0,end_z + 5)
-            ]
+    box_size = [
+        Vec3(1.5,0,0),
+        Vec3(0,1.5,0),
+        Vec3(0,0,end_z + 2.5)
+    ]
 
-            model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 5 ))
-            model.topology.setPeriodicBoxVectors(box_size)
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(1.5,1.5,end_z + 2.5 ))
+    model.topology.setPeriodicBoxVectors(box_size)
 
-            system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
+    system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
 
-            # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
-            sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
-            system.addForce(sheet_restraint)
-            sheet_restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
-            sheet_restraint.addPerParticleParameter('x0')
-            sheet_restraint.addPerParticleParameter('y0')
-            sheet_restraint.addPerParticleParameter('z0')
+    # create position sheet_restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
+    sheet_restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
+    system.addForce(sheet_restraint)
+    sheet_restraint.addGlobalParameter('k', 100.0*kilojoules_per_mole/angstrom**2)
+    sheet_restraint.addPerParticleParameter('x0')
+    sheet_restraint.addPerParticleParameter('y0')
+    sheet_restraint.addPerParticleParameter('z0')
 
-            for start, stop in sheet_indices:
-                for i in range(start, stop):
-                    sheet_restraint.addParticle(i, model.positions[i])
+    for start, stop in sheet_indices:
+        for i in range(start, stop):
+            sheet_restraint.addParticle(i, model.positions[i])
 
-            #add in bias potential for umbrella sampling 
-            custom_force = CustomExternalForce('0.5*j*((x-x)^2+(y-y)^2+(z-target)^2)')
-            system.addForce(custom_force)
-            custom_force.addGlobalParameter("target", target*nanometer)  
-            custom_force.addGlobalParameter("j", 1000*kilojoules_per_mole/nanometer**2) 
-            custom_force.addPerParticleParameter('z0')
-            custom_force.addPerParticleParameter('x0')
-            custom_force.addPerParticleParameter('y0')
+    #add in bias potential for umbrella sampling 
+    custom_force = CustomExternalForce('0.5*j*((x-x)^2+(y-y)^2+(z-target)^2)')
+    system.addForce(custom_force)
+    custom_force.addGlobalParameter("target", target*nanometer)  
+    custom_force.addGlobalParameter("j", 2500*kilojoules_per_mole/nanometer**2) 
+    custom_force.addPerParticleParameter('z0')
+    custom_force.addPerParticleParameter('x0')
+    custom_force.addPerParticleParameter('y0')
 
-            for start, stop in sugar_indices:
-                for i in range(start, stop):
-                    custom_force.addParticle(i, model.positions[i])
+    for start, stop in sugar_indices:
+        for i in range(start, stop):
+            custom_force.addParticle(i, model.positions[i])
 
-            stepsize = 0.002*picoseconds
+    stepsize = 0.001*picoseconds
 
-            integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, stepsize)
-            model.addExtraParticles(forcefield)
-            platform = Platform.getPlatformByName('CUDA')
-            properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
+    integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, stepsize)
+    model.addExtraParticles(forcefield)
+    platform = Platform.getPlatformByName('CUDA')
+    properties = {'CudaDeviceIndex': str(device_idx), 'CudaPrecision': 'single'}
 
-            simulation = Simulation(model.topology, system, integrator, platform, properties)
-            simulation.context.setPositions(model.positions)
-            simulation.context.setVelocitiesToTemperature(300*kelvin)
-            # save pre-minimized positions as pdb
+    simulation = Simulation(model.topology, system, integrator, platform, properties)
+    simulation.context.setPositions(model.positions)
+    simulation.context.setVelocitiesToTemperature(300*kelvin)
+    # save pre-minimized positions as pdb
 
-            simulation.minimizeEnergy()
+    simulation.minimizeEnergy()
 
-            # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
-            # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
+    # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
+    # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
 
-            simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
-                potentialEnergy=True, temperature=True, speed=True, time=True))
-            
-            #need to store the topologies because every sim has a slighlty different number of waters
-            model_top = model.getTopology()
-            topology_list.append(model_top)
+    simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
+        potentialEnergy=True, temperature=True, speed=True, time=True))
+    
+    #need to store the topologies because every sim has a slighlty different number of waters
+    model_top = model.getTopology()
 
-            file_handle = open(f"{args.outdir}/traj_{replicate}_{args.ribose}.dcd", 'bw')
-            dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
-            for step in range(0,args.nsteps, args.report):
-                simulation.step(args.report)
-                state = simulation.context.getState(getPositions=True)
-                positions = state.getPositions()
-                dcd_file.writeModel(positions)
-            file_handle.close()
-            replicate += 1
+    file_handle = open(f"{args.outdir}/traj_{replicate}_{args.ribose}.dcd", 'bw')
+    dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
+    for step in range(0,args.nsteps, args.report):
+        simulation.step(args.report)
+        state = simulation.context.getState(getPositions=True)
+        positions = state.getPositions()
+        dcd_file.writeModel(positions)
+    file_handle.close()
 
-        write_com(topology_list, target, args)
-        target += dz
+    return model_top
 
-    return model_top, target_list, topology_list
-
-
-simulate(1, 0, args.start_z, args.end_z, args.dz, args)
-
-def wham(ribose_type):
+def wham(ribose_type, args):
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
+    target_list = np.loadtxt(f'{args.outdir}heights.csv', delimiter=',')
 
     for height_index in target_list:
         height = np.loadtxt(f'{args.outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
@@ -341,15 +314,13 @@ def wham(ribose_type):
     
     ##compute reduced energy matrix A
     A = np.zeros((len(target_list),N))
-    K = 1000
+    K = 2500
     T = 300 * kelvin
     kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)
 
-    height_0 = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
-
     for height_index in range(len(target_list)):
-        current_height = height_0[height_index]
+        current_height = target_list[height_index]
         diff = np.abs(heights - current_height)
         diff = np.minimum(diff, 2*np.pi -diff)
         A[height_index,:] = 0.5*K*diff**2/kbT
@@ -358,8 +329,8 @@ def wham(ribose_type):
     
     #compute reduced energy matrix B
     L = len(target_list)
-    height_PMF = np.linspace(args.start_z, args.end_z, L, endpoint=False)
-    width = (args.end_z-args.start_z)/L
+    height_PMF = np.linspace(target_list[0], target_list[-1], L, endpoint=False)
+    width = (target_list[-1] - target_list [0])/L
     B = np.zeros((L,N))
 
     for i in range(L):
@@ -377,53 +348,46 @@ def wham(ribose_type):
 
     return height_PMF, calc_PMF
 
-D_height_PMF, D_calc_PMF = wham('D')
-L_height_PMF, L_calc_PMF = wham('L')
+def main():
+    args = parse_args()
+    sims = args.nsims
+    gpus = args.ngpus
+    proc = args.nprocs 
+    start_z = args.start_z
+    end_z = args.end_z
+    dz = args.dz
+    jobs = 0
 
-plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
-plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
-plt.xlabel('z coordinate')
-plt.ylabel('PMF')
-plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
-plt.show()
+    target=start_z
 
-# def main():
-#     args = parse_args()
-#     sims = args.nsims
-#     gpus = args.ngpus
-#     proc = args.nprocs
-#     jobs = 
-#     processes = []
-#     height_start = args.height_start
-#     height_end = args.height_end
-#     dz = args.z_increment
-#     target = height_start 
+    target_list = []
+    while target < end_z:
+        target_list.append(target)
+        target += dz
 
-#     while z < height_end:
-#         while jobs < sims:
-#             if len(processes) < proc: 
-#                 print('starting process', jobs)
-#                 p = mp.Process(target=simulate, args=(jobs, (jobs%gpus), target, args))
-#                 p.start()
-#                 processes.append(p)
-#         z += dz
+    np.savetxt(f'{args.outdir}/heights.csv', target_list, delimiter = ',')
+    target = start_z
 
-#     # with tqdm(total=total_sims) as pbar:
-#     #     while jobs < total_sims:
-#     #         if(len(processes) < proc):
-#     #             print("Starting process", jobs)
-#     #             p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
-#     #             p.start()
-#     #             processes.append(p)
-#     #             jobs += 1
-#     #         for p in processes:
-#     #             if not p.is_alive():
-#     #                 processes.remove(p)
-#     #                 pbar.update(1)
+    while target < end_z:
+        replicate = 1
+        topology_list = []
 
-#     # # Wait for all processes to finish
-#     # for p in processes:
-#     #     p.join()
+        while replicate <= args.nsims:
+            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {args.ribose}-ribose')
+            topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, args))
+            replicate+=1
+        write_com(topology_list, target)
+        target += dz
 
-# if __name__ == "__main__":
-#     main()
+    # D_height_PMF, D_calc_PMF = wham('D')
+    # L_height_PMF, L_calc_PMF = wham('L')
+
+    # plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
+    # plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
+    # plt.xlabel('height above sheet (nm)')
+    # plt.ylabel('PMF (kJ/mol)')
+    # plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
+    # plt.show()
+
+if __name__ == "__main__":
+    main()

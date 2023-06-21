@@ -263,7 +263,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, args):
         for i in range(start, stop):
             custom_force.addParticle(i, model.positions[i])
 
-    stepsize = 0.002*picoseconds
+    stepsize = 0.001*picoseconds
 
     integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, stepsize)
     model.addExtraParticles(forcefield)

@@ -36,7 +36,6 @@ def parse_args():
     parser.add_argument('--start_z', type=float, default=0.51, help='starting target z coordinate for umbrella sampling')
     parser.add_argument('--end_z', type=float, default=1, help='ending z coordinate for umbrella sampling')
     parser.add_argument('--dz', type=float, default=0.02, help='how much to increase the target z coordinate for each umbrella')
-    parser.add_argument('--ribose', choices=['D','L'], default='D', help='chose which ribose to simulate: D, L, or one of each')
     args = parser.parse_args()
     return args
 
@@ -110,15 +109,13 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
             xspacing += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def spawn_sugar(tops, poss, model, args):
+def spawn_sugar(tops, poss, model, ribose_type, args):
     sheet_starting_index = model.topology.getNumAtoms()
 
-    if args.ribose == 'D':
+    if ribose_type == 'D':
         topology, positions = tops[0], poss[0]
-        print('D1')
-    elif args.ribose == 'L':
+    elif ribose_type == 'L':
         topology, positions = tops[1], poss[1]
-        print('L1')
 
     #randomly set the initial x, y coords for ribose
     positions = translate(positions, random.uniform(0.5, 14.5),'x')
@@ -152,23 +149,25 @@ def load_mols(filenames, resnames):
         }
     return mols
 
-def write_com(topology_list, target, args):
+def write_com(topology_list, target, ribose_type, args):
     top_index = 0
     z_coordinates = []
 
     for replicate in range(args.nsims):
+
         replicate += 1
         top = md.Topology.from_openmm(topology_list[top_index])
-        traj = md.load_dcd(f'traj_{replicate}_{args.ribose}.dcd', top = top)
 
-        if args.ribose == 'D':
+        try:
+           traj = md.load_dcd(f'traj_{replicate}_{ribose_type}.dcd', top = top)
+        except Exception as e:
+            continue
+
+        if ribose_type == 'D':
             res_indicies = traj.topology.select('resname "DRIB"')
-            print('D2')
-        elif args.ribose == 'L':
+        elif ribose_type == 'L':
             res_indicies = traj.topology.select('resname "LRIB"')
-            print('L2')
 
-        print(res_indicies)
         res_traj = traj.atom_slice(res_indicies)
 
         com = md.compute_center_of_mass(res_traj)
@@ -176,10 +175,11 @@ def write_com(topology_list, target, args):
         z_coordinates.append(com[:,2])
         top_index+=1
 
-    z_coordinates = np.concatenate(z_coordinates) 
-    np.savetxt(f'{args.outdir}/com_heights_{np.round(target,3)}_{args.ribose}.csv', z_coordinates, fmt='%.5f', delimiter=',')  
+    if z_coordinates:
+        z_coordinates = np.concatenate(z_coordinates)
+        np.savetxt(f'{args.outdir}/com_heights_{np.round(target, 3)}_{ribose_type}.csv', z_coordinates, fmt='%.5f', delimiter=',')
 
-def simulate(jobid, device_idx, target, end_z, replicate, args):
+def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
 
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
@@ -221,7 +221,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, args):
 
     sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args))
+    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, ribose_type,args))
     if(args.verbose):
         print("Building system:", jobid)
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
@@ -286,7 +286,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, args):
     #need to store the topologies because every sim has a slighlty different number of waters
     model_top = model.getTopology()
 
-    file_handle = open(f"{args.outdir}/traj_{replicate}_{args.ribose}.dcd", 'bw')
+    file_handle = open(f"{args.outdir}/traj_{replicate}_{ribose_type}.dcd", 'bw')
     dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
     for step in range(0,args.nsteps, args.report):
         simulation.step(args.report)
@@ -301,7 +301,7 @@ def wham(ribose_type, args):
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt(f'{args.outdir}heights.csv', delimiter=',')
+    target_list = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
 
     for height_index in target_list:
         height = np.loadtxt(f'{args.outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
@@ -350,13 +350,12 @@ def wham(ribose_type, args):
 
 def main():
     args = parse_args()
-    sims = args.nsims
     gpus = args.ngpus
-    proc = args.nprocs 
     start_z = args.start_z
     end_z = args.end_z
     dz = args.dz
     jobs = 0
+    riboses = ['D','L']
 
     target=start_z
 
@@ -368,26 +367,49 @@ def main():
     np.savetxt(f'{args.outdir}/heights.csv', target_list, delimiter = ',')
     target = start_z
 
-    while target < end_z:
-        replicate = 1
-        topology_list = []
+    PMF = {}
 
-        while replicate <= args.nsims:
-            print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {args.ribose}-ribose')
-            topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, args))
-            replicate+=1
-        write_com(topology_list, target)
-        target += dz
+    for i in riboses:
+        ribose_type = i
+        target=start_z
 
-    # D_height_PMF, D_calc_PMF = wham('D')
-    # L_height_PMF, L_calc_PMF = wham('L')
+        while target < end_z:
+            replicate = 1
+            topology_list = []
 
-    # plt.plot(D_height_PMF,D_calc_PMF, linewidth=1)
-    # plt.plot(L_height_PMF,L_calc_PMF,linewidth=1)
-    # plt.xlabel('height above sheet (nm)')
-    # plt.ylabel('PMF (kJ/mol)')
-    # plt.legend(['D-ribose','L-ribose'],bbox_to_anchor=(1,1),loc=2)
-    # plt.show()
+            while replicate <= args.nsims:
+                print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {ribose_type}-ribose')
+                try:
+                    topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, args))
+                except KeyboardInterrupt:
+                    print('Keyboard Interrupt')
+                    return
+                except:
+                    print('Particle Coordinate is NaN')
+                replicate+=1
+
+            try:
+                write_com(topology_list, target, ribose_type, args)
+            except:
+                print('No available simulations for this target height')
+                height_list = np.loadtxt(f'{args.outdir}/heights.csv')
+                height_list = height_list[height_list != target]
+                np.savetxt(f'{args.outdir}/heights.csv', height_list)
+
+            target += dz
+    
+        height_key = f'{ribose_type}_height_PMF'
+        calc_key = f'{ribose_type}_calc_PMF'
+
+        PMF[height_key], PMF[calc_key] = wham(ribose_type ,args)
+    
+    keys = list(PMF.keys())
+    values = list(PMF.values())
+
+    for i in range(0,len(keys),2):
+        plt.plot(values[i],values[i+1])
+
+    plt.show()
 
 if __name__ == "__main__":
     main()

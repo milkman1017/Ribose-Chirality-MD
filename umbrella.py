@@ -150,34 +150,38 @@ def load_mols(filenames, resnames):
     return mols
 
 def write_com(topology_list, target, ribose_type, args):
-    top_index = 0
     z_coordinates = []
 
     for replicate in range(args.nsims):
-
         replicate += 1
+        top_index = 0
+
         top = md.Topology.from_openmm(topology_list[top_index])
-
+    
         try:
-           traj = md.load_dcd(f'traj_{replicate}_{ribose_type}.dcd', top = top)
+            traj = md.load(f'traj_{replicate}_{ribose_type}.dcd', top=top)
+            if ribose_type == 'D':
+                res_indices = traj.topology.select('resname "DRIB"')
+            elif ribose_type == 'L':
+                res_indices = traj.topology.select('resname "LRIB"')
+            
+            res_traj = traj.atom_slice(res_indices)
+
+            com = md.compute_center_of_mass(res_traj)
+
+            z_coordinates.append(com[:, 2])
+
+            top_index += 1
+
         except Exception as e:
-            continue
-
-        if ribose_type == 'D':
-            res_indicies = traj.topology.select('resname "DRIB"')
-        elif ribose_type == 'L':
-            res_indicies = traj.topology.select('resname "LRIB"')
-
-        res_traj = traj.atom_slice(res_indicies)
-
-        com = md.compute_center_of_mass(res_traj)
-
-        z_coordinates.append(com[:,2])
-        top_index+=1
+            print(f"Error loading trajectory traj_{replicate}_{ribose_type}.dcd:", e)
 
     if z_coordinates:
         z_coordinates = np.concatenate(z_coordinates)
         np.savetxt(f'{args.outdir}/com_heights_{np.round(target, 3)}_{ribose_type}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+    else:
+        print("No available simulations for this target height")
+
 
 def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
 
@@ -301,7 +305,7 @@ def wham(ribose_type, args):
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt(f'{args.outdir}/heights.csv', delimiter=',')
+    target_list = np.loadtxt(f'{args.outdir}/heights_{ribose_type}.csv', delimiter=',')
 
     for height_index in target_list:
         height = np.loadtxt(f'{args.outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
@@ -356,15 +360,6 @@ def main():
     dz = args.dz
     jobs = 0
     riboses = ['D','L']
-
-    target=start_z
-
-    target_list = []
-    while target < end_z:
-        target_list.append(target)
-        target += dz
-
-    np.savetxt(f'{args.outdir}/heights.csv', target_list, delimiter = ',')
     target = start_z
 
     PMF = {}
@@ -372,6 +367,7 @@ def main():
     for i in riboses:
         ribose_type = i
         target=start_z
+        target_list = []
 
         while target < end_z:
             replicate = 1
@@ -381,6 +377,8 @@ def main():
                 print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {ribose_type}-ribose')
                 try:
                     topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, args))
+                    target_list.append(target)
+                    print(target_list)
                 except KeyboardInterrupt:
                     print('Keyboard Interrupt')
                     return
@@ -390,13 +388,14 @@ def main():
 
             try:
                 write_com(topology_list, target, ribose_type, args)
-            except:
+            except Exception as e:
+                print(e)
                 print('No available simulations for this target height')
-                height_list = np.loadtxt(f'{args.outdir}/heights.csv')
-                height_list = height_list[height_list != target]
-                np.savetxt(f'{args.outdir}/heights.csv', height_list)
 
             target += dz
+        target_list = list(set(target_list))
+        print('total target list: ',target_list)
+        np.savetxt(f'heights_{ribose_type}.csv',target_list)
     
         height_key = f'{ribose_type}_height_PMF'
         calc_key = f'{ribose_type}_calc_PMF'

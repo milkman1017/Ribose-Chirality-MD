@@ -2,225 +2,145 @@ import numpy as np
 import json 
 from openmm.unit import *
 import glob
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as ax
 from tqdm import tqdm as pbar
 from mpl_toolkits.mplot3d import Axes3D
 from pylab import *
 import ripser
+import mdtraj as md
+import argparse
+from scipy.stats import gaussian_kde
 
-def rdf(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--nsims', type=int, default=1, help='number of simulations to analyze')
+    parser.add_argument('--nsteps', type=int, default=10000, help='the length of sims to analyze')
+    parser.add_argument('--lconc', type=int, default=0, help='the amount of the l-ribose in the simulation to analye')
+    parser.add_argument('--filepath', type=str, default='.', help='the file path from which to load sim data')
+    parser.add_argument('--outdir', type=str, default='.', help='output directory for results')
+    args = parser.parse_args()
+    return args
 
-    dribose_rdf = []
-    lribose_rdf = []
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        f.close()
-        for frame in traj:
-            for res in frame:
-                    if res[0] == 'D':
-                        dribose_rdf.append(np.average(np.array(frame[res]['positions'])[:,-1]))
-                    if res[0] == 'L':
-                        lribose_rdf.append(np.average(np.array(frame[res]['positions'])[:, -1]))                      
+def compute_heights(traj):
+    sheet_atoms = traj.topology.select('resn "G" or resn "C"')
+    
+    try:
+        dribose_atoms = traj.topology.select('resn "DRI"')
+        if len(dribose_atoms) > 0:
+            dribose_heights = md.compute_distances(traj, np.array([[sheet_atom, dribose_atom] for sheet_atom in sheet_atoms for dribose_atom in dribose_atoms]))[:, 0]
+        else:
+            print('No D-ribose in this sim')
+            dribose_heights = None
+    except:
+        print('No D-ribose in this sim')
+        dribose_heights = None
+    
+    try:
+        lribose_atoms = traj.topology.select('resn "LRI"')
+        if len(lribose_atoms) > 0:
+            lribose_heights = md.compute_distances(traj, np.array([[sheet_atom, lribose_atom] for sheet_atom in sheet_atoms for lribose_atom in lribose_atoms]))[:, 0]
+        else:
+            print('No L-ribose in this sim')
+            lribose_heights = None
+    except:
+        print('No L-ribose in this sim')
+        lribose_heights = None
+    
+    return dribose_heights, lribose_heights
 
-     #Calculate D-Ribose RDF
-    d_rdf = np.histogram(dribose_rdf, bins='auto')
-    d_gr = d_rdf[0]/((32/(8*8*3))*8*8*(d_rdf[1][1]-d_rdf[1][0]))
+def graph_heights(dribose_heights, lribose_heights):
+    dribose_heights = np.array(dribose_heights)
+    lribose_heights = np.array(lribose_heights)
 
+    d_kde = gaussian_kde(dribose_heights)
+    l_kde = gaussian_kde(lribose_heights)
 
-    # Calculate L-Ribose RDF
-    l_rdf = np.histogram(lribose_rdf, bins='auto')
-    l_gr = l_rdf[0]/((32/(8*8*3))*8*8*(l_rdf[1][1]-l_rdf[1][0]))
+    dx = np.linspace(dribose_heights.min(), dribose_heights.max(), 1000)
+    lx = np.linspace(lribose_heights.min(), lribose_heights.max(), 1000)
+
+    d_kde_vals = d_kde.evaluate(dx)
+    l_kde_vals = l_kde.evaluate(lx)
 
     fig, ax = plt.subplots()
 
-    ax.step(d_rdf[1][0:-1], d_gr, label='D-Ribose')
-    ax.step(l_rdf[1][0:-1], l_gr, label='L-Ribose')
+    ax.plot(dx,d_kde_vals,linewidth=1, color='r')
+    ax.plot(lx,l_kde_vals,linewidth=1, color='b')
+    ax.legend(['D-Ribose','L-Ribose'])
+    ax.set_xlabel('Height Above Sheet (nm)')
+    ax.set_ylabel('PDF')
+    ax.set_title('Probability Density of height of ribose')
+    plt.show()
+
+def compute_rdf(traj):
+    sheet_atoms = traj.topology.select('resn "G" or resn "C"')
+    
+    try:
+        dribose_atoms = traj.topology.select('resn "DRI"')
+        if len(dribose_atoms) > 0:
+            d_rdf, d_bins = md.compute_rdf(traj, np.array([[sheet_atom, dribose_atom] for sheet_atom in sheet_atoms for dribose_atom in dribose_atoms]))
+        else:
+            print('No D-ribose in this sim')
+            d_rdf, d_bins = None,None
+    except:
+        print('No D-ribose in this sim')
+        d_rdf, d_bins = None,None
+    
+    try:
+        lribose_atoms = traj.topology.select('resn "LRI"')
+        if len(lribose_atoms) > 0:
+            l_rdf, l_bins = md.compute_rdf(traj, np.array([[sheet_atom, lribose_atom] for sheet_atom in sheet_atoms for lribose_atom in lribose_atoms]))
+        else:
+            print('No L-ribose in this sim')
+            l_rdf, l_bins = None,None
+    except:
+        print('No L-ribose in this sim')
+        l_rdf, l_bins = None,None
+
+    return d_rdf, d_bins, l_rdf, l_bins
+
+def graph_rdf(d_rdf_final, d_bins_final, l_rdf_final, l_bins_final):
+    d_rdf_final = np.mean(d_rdf_final,axis=0)
+    d_bins_final = np.mean(d_bins_final,axis=0)
+    l_rdf_final = np.mean(l_rdf_final, axis=0)
+    l_bins_final = np.mean(l_bins_final, axis=0)
+
+    fig, ax = plt.subplots()
+    ax.plot(d_bins_final, d_rdf_final, color='r', linewidth=1, label='D-Ribose')
+    ax.plot(l_bins_final, l_rdf_final, color='b', linewidth=1, label='L-Ribose')
     ax.legend()
-
-    plt.ylim(0,None)
-    plt.xlim(0,2)
+    ax.set_xlabel('Height above sheet (nm)')
+    ax.set_ylabel('g(r)')
+    ax.set_title('RDF')
     plt.show()
 
-def compute_2D_rdf(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
-    dribose_dx = []
-    lribose_dx = []
+def main():
+    args  = parse_args()
+    sims = args.nsims
+    sim_length = args.nsteps
 
-    dribose_dy = []
-    lribose_dy = []
-
-    for filename in pbar(filenames, desc="Loading Data"):
-            # traj is a list of frames
-            # frames are dicts of residues
-            with open(filename) as f:
-                traj = json.load(f)
-            f.close()
-            for frame in traj:
-                for res in frame:
-                        if res[0] == 'D':
-                            dribose_dx.append(np.array(frame[res]['positions'])[:,0])
-                            dribose_dy.append(np.array(frame[res]['positions'])[:,1])
-                        if res[0] == 'L':
-                            lribose_dx.append(np.array(frame[res]['positions'])[:,0])
-                            lribose_dy.append(np.array(frame[res]['positions'])[:,1])
-
+    dribose_heights, lribose_heights = [],[]
+    d_rdf_final, d_bins_final, l_rdf_final, l_bins_final = [],[],[],[]
     
-    fig, ax = plt.subplots(1,2)
-    fig.suptitle('X-Y RDF')
-    fig.supxlabel('X coordinate (nm)')
-    fig.supylabel('Y Coordinate (nm)')
+    for sim_number in range(sims):
+        print('Analyzing sim number', sim_number)
 
-    ax[0].hist2d(np.array(dribose_dx).flatten(), np.array(dribose_dy).flatten(), bins=500, density=True)
-    ax[0].set_title('D-Ribose')
-    ax[1].hist2d(np.array(lribose_dx).flatten(), np.array(lribose_dy).flatten(), bins=500, density=True)
-    ax[1].set_title('L-Ribose')
+        traj = md.iterload(f'traj_{sim_number}_lconc_18_steps_{sim_length}.dcd', 
+                            top=f'topology_{sim_number}_lconc_18_steps_{sim_length}.pdb')
+        for chunk in traj:
 
-    plt.show()
+            dheight, lheight = compute_heights(chunk)
+            dribose_heights.extend(dheight)
+            lribose_heights.extend(lheight)
 
-def compute_angles(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[:nsims]
+            d_bins, d_rdf, l_bins, l_rdf = compute_rdf(chunk)
+            d_rdf_final.append(d_rdf)
+            d_bins_final.append(d_bins)
+            l_rdf_final.append(l_rdf)
+            l_bins_final.append(l_bins)
 
-    dribose_angle_x = []
-    dribose_angle_y = []
-    dribose_angle_z = []
+    graph_rdf(d_rdf_final, d_bins_final, l_rdf_final, l_bins_final)
 
-    lribose_angle_x = []
-    lribose_angle_y = []
-    lribose_angle_z = []
+    graph_heights(dribose_heights, lribose_heights)
 
-    x_axis = np.array([1, 0, 0])
-    y_axis = np.array([0, 1, 0])
-    z_axis = np.array([0, 0, 1])
-
-    angle_lists = [(dribose_angle_x, dribose_angle_y, dribose_angle_z), (lribose_angle_x, lribose_angle_y, lribose_angle_z)]
-
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        
-            for frame in traj:
-                for res in frame:
-                    if res[0] in ['D', 'L']:
-                            mol = np.array(frame[res]['positions'])
-
-                            centroid = np.average(mol, axis=0)
-                            mol -= centroid
-
-                            cov_matrix = np.cov(mol, rowvar=False)
-
-                            eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-                            principle_axes = eigenvectors.T
-
-                            dot_products = np.dot(principle_axes, [x_axis, y_axis, z_axis])
-
-                            angles = np.degrees(np.arctan2(dot_products[:, 1], dot_products[:, 0]))+180
-                            angle_x, angle_y, angle_z = angles
-
-                            angle_list = angle_lists[res[0] == 'L']
-
-                            angle_list[0].append(angle_x)
-                            angle_list[1].append(angle_y)
-                            angle_list[2].append(angle_z)
-                        
-
-    fig, ax = plt.subplots(2, subplot_kw={'projection': 'polar'})
-
-    dribose_x_hist = np.histogram(np.radians(dribose_angle_x), bins=100, density=True)
-    dribose_y_hist = np.histogram(np.radians(dribose_angle_y), bins=100, density=True)
-    dribose_z_hist = np.histogram(np.radians(dribose_angle_z), bins=100, density=True)
-
-    lribose_x_hist = np.histogram(np.radians(lribose_angle_x), bins=100, density=True)
-    lribose_y_hist = np.histogram(np.radians(lribose_angle_y), bins=100, density=True)
-    lribose_z_hist = np.histogram(np.radians(lribose_angle_z), bins=100, density=True)
-
-    ax[0].plot(dribose_x_hist[1][:-1], dribose_x_hist[0], label='x rotation')
-    ax[0].plot(dribose_y_hist[1][:-1], dribose_y_hist[0], label='y rotation')
-    ax[0].plot(dribose_z_hist[1][:-1], dribose_z_hist[0], label='z rotation')
-    ax[0].legend(bbox_to_anchor=(1,1))
-
-    ax[1].plot(lribose_x_hist[1][:-1], lribose_x_hist[0], label='x rotation')
-    ax[1].plot(lribose_y_hist[1][:-1], lribose_y_hist[0], label='y rotation')
-    ax[1].plot(lribose_z_hist[1][:-1], lribose_z_hist[0], label='z rotation')
-    ax[1].legend(bbox_to_anchor=(1,1))
-
-    plt.show()
-
-
-def hydrogen_bonds(lconc, nsims, filepath):
-    filenames = glob.glob(f"{filepath}/*.json")[0:nsims]
-    
-    donor_labels = set()
-    acceptor_labels = set()
-
-    for filename in pbar(filenames, desc="Loading Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        
-        hbonds = traj[-1]['hbonds']
-
-
-        for residue, bond_dict in hbonds.items():
-            donor_residue, acceptor_residue = residue.split('-')
-            
-            for atom in bond_dict.keys():
-                donor_labels.add(f"{donor_residue}-{atom.split('-')[0]}")
-                acceptor_labels.add(f"{acceptor_residue}-{atom.split('-')[1]}")
-
-        f.close()
-    
-    donor_labels = sorted(donor_labels)
-    acceptor_labels = sorted(acceptor_labels, reverse=True)
-    
-    bond_data = np.zeros((len(donor_labels), len(acceptor_labels)))
-
-    for filename in pbar(filenames, desc="Processing Data"):
-        with open(filename) as f:
-            traj = json.load(f)
-        
-        hbonds = traj[-1]['hbonds']
-        
-        for residue, bond_dict in hbonds.items():
-            donor_residue, acceptor_residue = residue.split('-')
-
-            for atom, count in bond_dict.items():
-                donor, acceptor = atom.split('-')
-                donor_label = f"{donor_residue}-{donor}"
-                acceptor_label = f"{acceptor_residue}-{acceptor}"
-                donor_index = donor_labels.index(donor_label)
-                acceptor_index = acceptor_labels.index(acceptor_label)
-                bond_data[donor_index, acceptor_index] += count
-        
-        f.close()
-
-    bond_data = (bond_data - np.mean(bond_data))/np.std(bond_data)
-
-    fig, ax = plt.subplots()
-    im = ax.imshow(bond_data, cmap="hot")
-
-    ax.set_xticks(np.arange(len(acceptor_labels)))
-    ax.set_xlabel('Acceptors')
-    ax.set_yticks(np.arange(len(donor_labels)))
-    ax.set_xticklabels(acceptor_labels)
-    ax.set_yticklabels(donor_labels)
-    ax.set_ylabel('Donors')
-
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-
-    cbar = ax.figure.colorbar(im, ax=ax)
-
-    ax.set_title('Hydrogen Bond Heatmap')
-
-    plt.show()
-
-    return bond_data
-
-hbonds = hydrogen_bonds(32,10,'.')
-
-def hbond_TDA(hbonds):
-     pass
-     
-
-
-
+if __name__ == '__main__':
+    main()

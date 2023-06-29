@@ -9,3 +9,8 @@ cycle.sh
 *.png
 *.dcd
 WHAM
+topology*
+traj*
+ribose_analysis_deprecated.py
+umbrella.pdb
+pre_energy_min.pdb

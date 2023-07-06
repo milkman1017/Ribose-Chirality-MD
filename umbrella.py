@@ -149,17 +149,15 @@ def load_mols(filenames, resnames):
         }
     return mols
 
-def write_com(topology_list, target, ribose_type, args):
+def write_com(topology_list, successful_sims,target, ribose_type, args):
     z_coordinates = []
 
-    for replicate in range(args.nsims):
-        replicate += 1
-        top_index = 0
+    top_index = 0
+    for i in successful_sims:
 
-        top = md.Topology.from_openmm(topology_list[top_index])
-    
         try:
-            traj = md.load(f'traj_{replicate}_{ribose_type}.dcd', top=top)
+            top = md.Topology.from_openmm(topology_list[top_index])
+            traj = md.load(f'traj_{i}_{ribose_type}.dcd', top=top)
             if ribose_type == 'D':
                 res_indices = traj.topology.select('resname "DRIB"')
             elif ribose_type == 'L':
@@ -174,7 +172,7 @@ def write_com(topology_list, target, ribose_type, args):
             top_index += 1
 
         except Exception as e:
-            print(f"Error loading trajectory traj_{replicate}_{ribose_type}.dcd:", e)
+            print(f"Error loading trajectory traj_{i}_{ribose_type}.dcd:", e)
 
     if z_coordinates:
         z_coordinates = np.concatenate(z_coordinates)
@@ -329,7 +327,7 @@ def wham(ribose_type, args):
         diff = np.minimum(diff, 2*np.pi -diff)
         A[height_index,:] = 0.5*K*diff**2/kbT
     
-    fastmbar = FastMBAR(energy=A, num_conf=num_conf, cuda=False, verbose=True)
+    fastmbar = FastMBAR(energy=A, num_conf=num_conf, cuda=True, verbose=True)
     
     #compute reduced energy matrix B
     L = len(target_list)
@@ -372,13 +370,14 @@ def main():
         while target < end_z:
             replicate = 1
             topology_list = []
+            successful_sims = []
 
             while replicate <= args.nsims:
                 print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {ribose_type}-ribose')
                 try:
                     topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, args))
+                    successful_sims.append(replicate)
                     target_list.append(target)
-                    print(target_list)
                 except KeyboardInterrupt:
                     print('Keyboard Interrupt')
                     return
@@ -387,14 +386,13 @@ def main():
                 replicate+=1
 
             try:
-                write_com(topology_list, target, ribose_type, args)
+                write_com(topology_list, successful_sims, target, ribose_type, args)
             except Exception as e:
                 print(e)
                 print('No available simulations for this target height')
 
             target += dz
         target_list = list(set(target_list))
-        print('total target list: ',target_list)
         np.savetxt(f'heights_{ribose_type}.csv',target_list)
     
         height_key = f'{ribose_type}_height_PMF'
@@ -403,10 +401,15 @@ def main():
         PMF[height_key], PMF[calc_key] = wham(ribose_type ,args)
     
     keys = list(PMF.keys())
+    print(keys)
     values = list(PMF.values())
 
     for i in range(0,len(keys),2):
-        plt.plot(values[i],values[i+1])
+        plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][0]}-Ribose')
+
+    plt.xlabel('height above sheet (nm)')
+    plt.ylabel('PMF (kJ/mol)')
+    plt.legend()
 
     plt.show()
 

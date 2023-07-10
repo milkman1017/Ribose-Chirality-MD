@@ -10,6 +10,8 @@ import ripser
 import mdtraj as md
 import argparse
 from scipy.stats import gaussian_kde
+from scipy.fft import fft, ifft
+import seaborn as sns
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -52,19 +54,10 @@ def graph_heights(dribose_heights, lribose_heights):
     dribose_heights = np.array(dribose_heights)
     lribose_heights = np.array(lribose_heights)
 
-    d_kde = gaussian_kde(dribose_heights)
-    l_kde = gaussian_kde(lribose_heights)
-
-    dx = np.linspace(dribose_heights.min(), dribose_heights.max(), 1000)
-    lx = np.linspace(lribose_heights.min(), lribose_heights.max(), 1000)
-
-    d_kde_vals = d_kde.evaluate(dx)
-    l_kde_vals = l_kde.evaluate(lx)
-
     fig, ax = plt.subplots()
 
-    ax.plot(dx,d_kde_vals,linewidth=1, color='r')
-    ax.plot(lx,l_kde_vals,linewidth=1, color='b')
+    sns.kdeplot(data=dribose_heights, linewidth=1, color='b', label='D-Ribose')
+    sns.kdeplot(data=lribose_heights, linewidth=1, color='r', label='L-Ribose')
     ax.legend(['D-Ribose','L-Ribose'])
     ax.set_xlabel('Height Above Sheet (nm)')
     ax.set_ylabel('PDF')
@@ -73,7 +66,16 @@ def graph_heights(dribose_heights, lribose_heights):
 
 def compute_hbonds(chunk, hbond_counts):
 
+    D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L = [],[],[],[],[],[],[],[],[]
+
     for frame in chunk:
+        DG = 0
+        DC = 0
+        LG = 0
+        LC = 0
+        DD = 0
+        DL = 0
+        LL = 0
         hbonds = md.baker_hubbard(frame,exclude_water=True)
         
         #get hbond counts 
@@ -81,6 +83,21 @@ def compute_hbonds(chunk, hbond_counts):
             atom1, atom2 = hbond[0], hbond[2]
             res1, res2 = frame.topology.atom(atom1).residue, frame.topology.atom(atom2).residue
             atom1_index, atom2_index = frame.topology.atom(atom1).index % res1.n_atoms, frame.topology.atom(atom2).index % res2.n_atoms
+
+            if (res1.name == 'G' and res2.name == 'DRI') or (res1.name == 'DRI' and res2.name == 'G'):
+                DG += 1
+            elif (res1.name == 'C' and res2.name == 'DRI') or (res1.name == 'DRI' and res2.name == 'C'):
+                DC+= 1
+            elif (res1.name == 'G' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'G'):
+                LG += 1
+            elif (res1.name == 'C' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'C'):
+                LC += 1
+            elif (res1.name == 'DRI' and res2.name == 'DRI'):
+                DD += 1
+            elif (res1.name == 'DRI' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'DRI'):
+                DL += 1
+            elif (res1.name == 'LRI' and res2.name == 'LRI'):
+                LL += 1
 
             hbond_key = f'{res1.name}-{res2.name}'
             hbond_count_key = f"{atom1_index}-{atom2_index}"
@@ -91,7 +108,17 @@ def compute_hbonds(chunk, hbond_counts):
                 hbond_counts[hbond_key][hbond_count_key]=0
             hbond_counts[hbond_key][hbond_count_key] += 1
 
-    return hbond_counts
+        D_G.append(DG)
+        D_C.append(DC)
+        D_B.append(DG+DC)
+        L_G.append(LG)
+        L_C.append(LC)
+        L_B.append(LG+LC)
+        D_D.append(DD)
+        D_L.append(DL)
+        L_L.append(LL)
+            
+    return hbond_counts, D_G, D_C, D_B, L_G, L_C, L_B, D_D, D_L, L_L
 
 def ribose_label_sort(item):
     if item.startswith('DRI'):
@@ -186,6 +213,69 @@ def hbond_heatmap(hbond_counts):
     plt.suptitle('Hydrogen Bond Heat Map')
     plt.show()
 
+def hbond_order(D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L):
+    D_G = np.mean(D_G,axis=0)/12
+    D_C = np.mean(D_C, axis=0)/12
+    D_B = np.mean(D_B, axis=0)/12
+    L_G = np.mean(L_G, axis=0)/18
+    L_C = np.mean(L_C, axis=0)/18
+    L_B = np.mean(L_B, axis=0)/18
+    D_D = np.mean(D_D, axis=0)/12
+    D_L = np.mean(D_L, axis=0)/30
+    L_L = np.mean(L_L, axis=0)/18
+
+    time = np.arange(len(D_G)) * 0.004
+
+    fig, ax = plt.subplots(3,3)
+    ax[0,0].plot(time, D_G, linewidth=1, color='b', label='D-Ribose')
+    ax[0,0].plot(time, L_G, linewidth=1, color='r', label='L-Ribose')
+    ax[0,0].set_title('Guanine H-Bonds')
+    ax[0,0].set_xlabel('Time (ns)')
+    ax[0,0].set_ylabel('Count')
+
+    ax[1,0].plot(time, D_C, linewidth=1, color='b', label='D-Ribose')
+    ax[1,0].plot(time, L_C, linewidth=1, color='r', label='L-Ribose')
+    ax[1,0].set_title('Cytosine H-Bonds')
+    ax[1,0].set_xlabel('Time (ns)')
+    ax[1,0].set_ylabel('Count')
+
+    ax[2,0].plot(time, D_B, linewidth=1, color='b', label='D-Ribose')
+    ax[2,0].plot(time, L_B, linewidth=1, color='r', label='L-Ribose')
+    ax[2,0].set_title('Guanine and Cytosine H-Bonds')
+    ax[2,0].set_xlabel('Time (ns)')
+    ax[2,0].set_ylabel('Count')
+
+
+    ax[0,1].hist(D_G, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
+    ax[0,1].hist(L_G, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
+    ax[0,1].set_title('Distribution of Guanine H-Bonds')
+    ax[0,1].set_xlabel('Number of H-Bonds')
+
+    ax[1,1].hist(D_C, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
+    ax[1,1].hist(L_C, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
+    ax[1,1].set_title('Distribution of Cytosine H-Bonds')
+    ax[1,1].set_xlabel('Number of H-Bonds')
+
+    ax[2,1].hist(D_B, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
+    ax[2,1].hist(L_B, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
+    ax[2,1].set_title('Distribution of Sheet H-Bonds')
+    ax[2,1].set_xlabel('Number of H-Bonds')
+
+    ax[0,2].plot(time, D_D, linewidth=1, color='b', label='D-Ribose')
+    ax[0,2].plot(time, L_L, linewidth=1, color='r', label='L-Ribose')
+    ax[0,2].set_title('Self-Ribose H-Bonds')
+    ax[0,2].set_xlabel('Time (ns)')
+    ax[0,2].set_ylabel('Count')
+
+    ax[1,2].plot(time, D_L, linewidth=1, color='m')
+    ax[1,2].set_title('D to L Ribose H-Bonds')
+    ax[1,2].set_xlabel('Time (ns)')
+    ax[1,2].set_ylabel('Count')
+
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 def nematic_order(traj):
     dribose_indices_list = []  
     lribose_indices_list = []  
@@ -235,6 +325,49 @@ def graph_nematic_order(dribose_order, lribose_order):
     plt.suptitle('Nematic Order of Ribose Enantiomers')
     plt.show()
 
+def sasa(traj):
+    DRI_res_indices = []
+    LRI_res_indices = []
+
+    for residue in traj.topology.residues: 
+        if residue.name == 'DRI':
+            DRI_res_indices.append(residue.index)
+        elif residue.name == 'LRI':
+            LRI_res_indices.append(residue.index)
+
+    sasa = md.shrake_rupley(traj, mode='residue')
+    
+    DRI_sasa = sasa[:, DRI_res_indices]
+    LRI_sasa = sasa[:, LRI_res_indices]
+
+    return DRI_sasa, LRI_sasa
+
+def autocorr(x):
+    "Compute an autocorrelation with numpy"
+    x = x - np.mean(x)
+    result = np.correlate(x, x, mode='full')
+    result = result[result.size//2:]
+    return result / result[0]
+
+def graph_sasa(DRI_sasa, LRI_sasa):
+    DRI_sasa = np.array(DRI_sasa)
+    LRI_sasa = np.array(LRI_sasa)
+
+    DRI_sasa_tot_sims = np.concatenate(DRI_sasa, axis=1)
+    LRI_sasa_tot_sims = np.concatenate(LRI_sasa, axis=1)
+
+    DRI_sasa_tot =np.concatenate(DRI_sasa_tot_sims)
+    LRI_sasa_tot = np.concatenate(LRI_sasa_tot_sims)
+
+    sns.kdeplot(data=DRI_sasa_tot, linewidth=1, color='b', label='D-Ribose')
+    sns.kdeplot(data=LRI_sasa_tot, linewidth=1, color='r', label='L-Ribose')
+    plt.yscale('log')
+    plt.xlabel('Solvent Accessible Surface Area (nm^2)')
+    plt.ylabel('log density')
+    plt.title('KDE of SASA')
+    plt.legend()
+    plt.show()
+
 def main():
     args  = parse_args()
     sims = args.nsims
@@ -242,6 +375,8 @@ def main():
 
     dribose_heights, lribose_heights = [],[]
     dribose_order, lribose_order = [],[]
+    sim_DRI_sasa, sim_LRI_sasa = [],[]
+    sim_D_G, sim_D_C, sim_D_B, sim_L_G, sim_L_C, sim_L_B, sim_D_D, sim_D_L, sim_L_L = [],[],[],[],[],[],[],[],[]
     hbond_counts = dict()
 
     for sim_number in range(sims):
@@ -251,22 +386,53 @@ def main():
                             top=f'topology_{sim_number}_lconc_18_steps_{sim_length}.pdb')
         
         traj_d_order, traj_l_order = [],[]
+        traj_DRI_sasa, traj_LRI_sasa = [],[]
+        D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L = [],[],[],[],[],[],[],[],[]
         for chunk in traj:
+
             # dheight, lheight = compute_heights(chunk)
             # dribose_heights.extend(dheight)
             # lribose_heights.extend(lheight)
 
-            # hbond_counts = compute_hbonds(chunk,hbond_counts)
+        #     hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
+        #     D_G.extend(traj_D_G)
+        #     D_C.extend(traj_D_C)
+        #     D_B.extend(traj_D_B)
+        #     L_G.extend(traj_L_G)
+        #     L_C.extend(traj_L_C)
+        #     L_B.extend(traj_L_B)
+        #     D_D.extend(traj_D_D)
+        #     D_L.extend(traj_D_L)
+        #     L_L.extend(traj_L_L)
 
-            traj_d_ord, traj_l_ord = nematic_order(chunk)
-            traj_d_order.extend(traj_d_ord)
-            traj_l_order .extend(traj_l_ord)
-        dribose_order.append(traj_d_order)
-        lribose_order.append(traj_l_order)
+        #     traj_d_ord, traj_l_ord = nematic_order(chunk)
+        #     traj_d_order.extend(traj_d_ord)
+        #     traj_l_order .extend(traj_l_ord)
 
+            DRI_sasa, LRI_sasa = sasa(chunk)
+            traj_DRI_sasa.extend(DRI_sasa)
+            traj_LRI_sasa.extend(LRI_sasa)
+
+        # sim_D_G.append(D_G)
+        # sim_D_C.append(D_C)
+        # sim_D_B.append(D_B)
+        # sim_L_G.append(L_G)
+        # sim_L_C.append(L_C)
+        # sim_L_B.append(L_B)
+        # sim_D_D.append(D_D)
+        # sim_D_L.append(D_L)
+        # sim_L_L.append(L_L)
+
+        # dribose_order.append(traj_d_order)
+        # lribose_order.append(traj_l_order)
+
+        sim_DRI_sasa.append(traj_DRI_sasa)
+        sim_LRI_sasa.append(traj_LRI_sasa)
+
+    graph_sasa(sim_DRI_sasa, sim_LRI_sasa)
     # hbond_heatmap(hbond_counts)
-
-    graph_nematic_order(dribose_order, lribose_order)
+    # hbond_order(sim_D_G,sim_D_C,sim_D_B,sim_L_G,sim_L_C,sim_L_B,sim_D_D,sim_D_L,sim_L_L)
+    # graph_nematic_order(dribose_order, lribose_order)
     # graph_heights(dribose_heights, lribose_heights)
 
 if __name__ == '__main__':

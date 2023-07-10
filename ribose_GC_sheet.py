@@ -253,6 +253,7 @@ def simulate(jobid, device_idx, args):
     simulation.step(args.nsteps)
 
     
+    
 def main():
     args = parse_args()
     total_sims = args.nsims

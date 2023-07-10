@@ -244,58 +244,15 @@ def simulate(jobid, device_idx, args):
     simulation.minimizeEnergy()
 
     simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
-    trajectory = []
+    with open (f'{args.outdir}/topology_{jobid}_lconc_{args.lconc}_steps_{args.nsteps}.pdb','w') as topology_file:
+        PDBFile.writeFile(simulation.topology, model.positions,topology_file)
 
-    model_top = model.getTopology()
-    for step in range(0,args.nsteps, args.report):
-        simulation.step(args.report)
-        state = simulation.context.getState(getPositions=True, getVelocities=True)
-        positions = state.getPositions(asNumpy=True).tolist()
-        velocities = state.getVelocities(asNumpy=True).tolist()
-        frame = dict()
-        frame['residues'] = dict()
-        
-        for atom in model_top.atoms():
-            resname = atom.residue.name + str(atom.residue.index)
-            if("HOH" in resname):
-                continue
-            if(resname not in frame['residues'].keys()):
-                frame['residues'][resname] = dict()
-                frame['residues'][resname]['positions'] = []
-                frame['residues'][resname]['velocities'] = []
-                
-            frame['residues'][resname]['positions'].append(positions[atom.index]) 
-            frame['residues'][resname]['velocities'].append(velocities[atom.index])
+    dcd_reporter = DCDReporter(f'{args.outdir}/traj_{jobid}_lconc_{args.lconc}_steps_{args.nsteps}.dcd',args.report)
+    simulation.reporters.append(dcd_reporter)
 
-        positions_traj = md.Trajectory(positions, md.Topology.from_openmm(model_top))
-        hbonds = md.baker_hubbard(positions_traj)
+    simulation.step(args.nsteps)
 
-        # Convert the hydrogen bond information to a dictionary
-        if step == 0:
-             hbond_dict = dict()
-
-        for hbond in hbonds:
-            res1 = positions_traj.topology.atom(hbond[0]).residue
-            res2 = positions_traj.topology.atom(hbond[2]).residue
-
-            hbond_key = f"{res1.name}-{res2.name}"
-            # donor, hydrogen, acceptor
-            hbond_count_key = f"{hbond[0] % res1.n_atoms}-{hbond[2] % res2.n_atoms}"
-
-            if hbond_key not in hbond_dict:
-                hbond_dict[hbond_key] = dict()
-            if hbond_count_key not in hbond_dict[hbond_key]:
-                hbond_dict[hbond_key][hbond_count_key] = 0
-            hbond_dict[hbond_key][hbond_count_key] += 1
-
-        if step == (args.nsteps - args.report):
-            frame['hbonds'] = hbond_dict
-
-            trajectory.append(frame)
-          
-    with open(f"{args.outdir}/output{jobid}_1m.json", 'w') as f:
-        f.write(json.dumps(trajectory))
-
+    
     
 def main():
     args = parse_args()

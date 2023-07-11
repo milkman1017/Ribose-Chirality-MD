@@ -14,19 +14,13 @@ from scipy.fft import fft, ifft
 import seaborn as sns
 import configparser
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--nsims', type=int, default=1, help='number of simulations to analyze')
-    parser.add_argument('--nsteps', type=int, default=10000, help='the length of sims to analyze')
-    parser.add_argument('--lconc', type=int, default=0, help='the amount of the l-ribose in the simulation to analye')
-    parser.add_argument('--filepath', type=str, default='.', help='the file path from which to load sim data')
-    parser.add_argument('--outdir', type=str, default='.', help='output directory for results')
-    args = parser.parse_args()
-    return args
+def get_config():
+    config = configparser.ConfigParser()
+    config.read('analysis_config.ini')
+    return config
 
 def compute_heights(traj):
     sheet_atoms = traj.topology.select('resn "G" or resn "C"')
-    
     try:
         dribose_atoms = traj.topology.select('resn "DRI"')
         if len(dribose_atoms) > 0:
@@ -277,9 +271,6 @@ def hbond_order(D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L):
     plt.tight_layout()
     plt.show()
 
-def color_hbonds(hbonds):
-    pymol.cmd.reinitialize()
-
 def nematic_order(traj):
     dribose_indices_list = []  
     lribose_indices_list = []  
@@ -373,9 +364,14 @@ def graph_sasa(DRI_sasa, LRI_sasa):
     plt.show()
 
 def main():
-    args  = parse_args()
-    sims = args.nsims
-    sim_length = args.nsteps
+    config = get_config()
+    sims = int(config.get('Input Setup','number sims'))
+    sim_length = int(config.get('Input Setup','number steps'))
+    lconc = int(config.get('Input Setup','lconc'))
+
+    indir = config.get('Input Setup','input directory')
+    outdir = config.get('Output Parameters','output directory')
+
 
     dribose_heights, lribose_heights = [],[]
     dribose_order, lribose_order = [],[]
@@ -386,19 +382,19 @@ def main():
     for sim_number in range(sims):
         print('Analyzing sim number', sim_number)
 
-        traj = md.iterload(f'traj_{sim_number}_lconc_18_steps_{sim_length}.dcd', 
-                            top=f'topology_{sim_number}_lconc_18_steps_{sim_length}.pdb')
+        traj = md.iterload(f'{indir}/traj_{sim_number}_lconc_18_steps_{sim_length}.dcd', 
+                            top=f'{indir}/topology_{sim_number}_lconc_18_steps_{sim_length}.pdb')
         
         traj_d_order, traj_l_order = [],[]
         traj_DRI_sasa, traj_LRI_sasa = [],[]
         D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L = [],[],[],[],[],[],[],[],[]
         for chunk in traj:
 
-            # dheight, lheight = compute_heights(chunk)
-            # dribose_heights.extend(dheight)
-            # lribose_heights.extend(lheight)
+            dheight, lheight = compute_heights(chunk)
+            dribose_heights.extend(dheight)
+            lribose_heights.extend(lheight)
 
-            hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
+            # hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
         #     D_G.extend(traj_D_G)
         #     D_C.extend(traj_D_C)
         #     D_B.extend(traj_D_B)
@@ -434,12 +430,12 @@ def main():
         # sim_DRI_sasa.append(traj_DRI_sasa)
         # sim_LRI_sasa.append(traj_LRI_sasa)
 
-    color_hbonds(hbond_counts)
+
     # graph_sasa(sim_DRI_sasa, sim_LRI_sasa)
     # hbond_heatmap(hbond_counts)
     # hbond_order(sim_D_G,sim_D_C,sim_D_B,sim_L_G,sim_L_C,sim_L_B,sim_D_D,sim_D_L,sim_L_L)
     # graph_nematic_order(dribose_order, lribose_order)
-    # graph_heights(dribose_heights, lribose_heights)
+    graph_heights(dribose_heights, lribose_heights)
     print(hbond_counts)
 
 if __name__ == '__main__':

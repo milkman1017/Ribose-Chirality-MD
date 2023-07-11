@@ -20,24 +20,10 @@ import json
 from simtk.openmm import app
 import configparser
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--nprocs', type=int, default=8, help='number of simultaneously processes to use')
-    parser.add_argument('--outdir', type=str, default='.', help='output directory')
-    parser.add_argument('--nsims', type=int, default=8, help='number of simulations to run')
-    parser.add_argument('--ngpus', type=int, default=1, help='number of gpus on the system')
-    parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
-    parser.add_argument('--report', type=int, default=500, help='report interval')
-    parser.add_argument('--verbose', action='store_true', help='print verbose output')
-    parser.add_argument('--sh', type=int, default=5, help='sheet height')
-    parser.add_argument('--sw', type=int, default=5, help='sheet width')
-    parser.add_argument('--lconc', type=int, default=5, help='number of lribose molecules in a given sheet')
-    args = parser.parse_args()
-    return args
-
 def get_config():
     config = configparser.ConfigParser()
     config.read('sheet_config.ini')
+    return config
     
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
@@ -177,8 +163,16 @@ def load_mols(filenames, resnames):
     return mols
 
 
-def simulate(jobid, device_idx, args):
+def simulate(jobid, device_idx, config):
     print(device_idx)
+
+    sh = int(config.get('Sheet Setup','sheet height'))
+    sw = int(config.get('Sheet Setup','sheet width'))
+    lconc = int(config.get('Sheet Setup','lconc'))
+    outdir  = config.get('Output Parameters','output directory')
+    report = int(config.get('Output Parameters','report interval'))
+    nsteps = int(config.get('Simulation Setup','number steps'))
+
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
 
@@ -186,22 +180,27 @@ def simulate(jobid, device_idx, args):
     gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
     #move above and to middle of sheet
     ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], 14, 'z')
-    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'y')
-    # ad_ribose_conformer = translate(ad_ribose_conformer, 20, 'x')
+    ad_ribose_conformer = translate(ad_ribose_conformer, 5, 'y')
+    ad_ribose_conformer = translate(ad_ribose_conformer, 5, 'x')
 
     al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], 14, 'z')
-    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'y')
-    # al_ribose_conformer = translate(al_ribose_conformer, 20, 'x')
-    if(args.verbose):
+    al_ribose_conformer = translate(al_ribose_conformer, 5, 'y')
+    al_ribose_conformer = translate(al_ribose_conformer, 5, 'x')
+    if(config.get('Output Parameters','verbose')=='True'):
         print("Building molecules:", jobid)
 
     #line up the guanine and cytosines so that the molecules face eachother
     c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
     c = rotate(c, np.deg2rad(180), axis='y')
     c = rotate(c, np.deg2rad(190), axis='x')
-    # c = translate(c, 8, 'y')
+    c = translate(c,1,'z')
+    c = translate(c,4,'x')
+    c = translate(c,4,'y')
+
     g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-    g = translate(g, .7, axis='x')
+    g = translate(g, 4.7, axis='x')
+    g = translate(g, 4, 'y')
+    g = translate(g, 1, 'z')
 
     # initializing the modeler requires a topology and pos
     # we immediately empty the modeler for use later
@@ -212,15 +211,24 @@ def simulate(jobid, device_idx, args):
     #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
     sheet_indices = []
 
-    sheet_indices.append(make_sheet(args.sh, args.sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
+    sheet_indices.append(make_sheet(sh, sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-    make_sheet_random(args.sh, args.sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args.lconc, step=8)
-    if(args.verbose):
+    make_sheet_random(sh, sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, lconc, step=8)
+    if(config.get('Output Parameters','verbose') == 'True'):
         print("Building system:", jobid)
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
     forcefield.registerTemplateGenerator(gaff.generator)
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize = Vec3(args.sh + 1, args.sw + 1 , 3)*nanometers)
-    system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=1*nanometer, constraints=HBonds)
+
+    box_size = [
+        Vec3(sh+0.5,0,0),
+        Vec3(0,sw+0.5,0),
+        Vec3(0,0,6.5)
+    ]
+
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sh,sw,6))
+    model.topology.setPeriodicBoxVectors(box_size)
+
+    system = forcefield.createSystem(model.topology,nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
 
     # create position restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
     restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
@@ -247,20 +255,20 @@ def simulate(jobid, device_idx, args):
 
     simulation.minimizeEnergy()
 
-    simulation.reporters.append(StateDataReporter(f"{args.outdir}/output{jobid}.txt", args.report, step=True, potentialEnergy=True, temperature=True, speed=True))
-    with open (f'{args.outdir}/topology_{jobid}_lconc_{args.lconc}_steps_{args.nsteps}.pdb','w') as topology_file:
+    simulation.reporters.append(StateDataReporter(f"{outdir}/output{jobid}.txt", report, step=True, potentialEnergy=True, temperature=True, speed=True))
+    with open (f'{outdir}/topology_{jobid}_lconc_{lconc}_steps_{nsteps}.pdb','w') as topology_file:
         PDBFile.writeFile(simulation.topology, model.positions,topology_file)
 
-    dcd_reporter = DCDReporter(f'{args.outdir}/traj_{jobid}_lconc_{args.lconc}_steps_{args.nsteps}.dcd',args.report)
+    dcd_reporter = DCDReporter(f'{outdir}/traj_{jobid}_lconc_{lconc}_steps_{nsteps}.dcd',report)
     simulation.reporters.append(dcd_reporter)
 
-    simulation.step(args.nsteps)
+    simulation.step(nsteps)
 
 def main():
-    args = parse_args()
-    total_sims = args.nsims
-    gpus = args.ngpus
-    proc = args.nprocs
+    config = get_config()
+    total_sims = int(config.get('Simulation Setup','number steps'))
+    gpus = int(config.get('Simulation Setup','number gpus'))
+    proc = int(config.get('Simulation Setup','number processes'))
     jobs = 0
     processes = []
 
@@ -268,7 +276,7 @@ def main():
         while jobs < total_sims:
             if(len(processes) < proc):
                 print("Starting process", jobs)
-                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), args))
+                p = mp.Process(target=simulate, args=(jobs, (jobs % gpus), config))
                 p.start()
                 processes.append(p)
                 jobs += 1

@@ -23,22 +23,13 @@ from simtk.openmm import app
 import random as random
 import scipy.optimize as optim
 from FastMBAR import *
+import configparser
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--nprocs', type=int, default=8, help='number of simultaneously processes to use')
-    parser.add_argument('--outdir', type=str, default='.', help='output directory')
-    parser.add_argument('--nsims', type=int, default=8, help='number of simulations to run per umbrella')
-    parser.add_argument('--ngpus', type=int, default=1, help='number of gpus on the system')
-    parser.add_argument('--nsteps', type=int, default=100000, help='number of steps')
-    parser.add_argument('--report', type=int, default=500, help='report interval')
-    parser.add_argument('--verbose', action='store_true', help='print verbose output')
-    parser.add_argument('--start_z', type=float, default=0.51, help='starting target z coordinate for umbrella sampling')
-    parser.add_argument('--end_z', type=float, default=1, help='ending z coordinate for umbrella sampling')
-    parser.add_argument('--dz', type=float, default=0.02, help='how much to increase the target z coordinate for each umbrella')
-    args = parser.parse_args()
-    return args
-
+def get_config():
+    config = configparser.ConfigParser()
+    config.read('umbrella_config.ini')
+    return config
+    
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
         mol += [step, 0, 0] * angstrom
@@ -109,7 +100,7 @@ def make_sheet(height, width, tops, poss, model, step=5.0):
             xspacing += 1
     return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def spawn_sugar(tops, poss, model, ribose_type, args):
+def spawn_sugar(tops, poss, model, ribose_type, config):
     sheet_starting_index = model.topology.getNumAtoms()
 
     if ribose_type == 'D':
@@ -149,7 +140,9 @@ def load_mols(filenames, resnames):
         }
     return mols
 
-def write_com(topology_list, successful_sims,target, ribose_type, args):
+def write_com(topology_list, successful_sims,target, ribose_type, config):
+    outdir = config.get('Output Parameters','outdir')
+
     z_coordinates = []
 
     top_index = 0
@@ -176,12 +169,16 @@ def write_com(topology_list, successful_sims,target, ribose_type, args):
 
     if z_coordinates:
         z_coordinates = np.concatenate(z_coordinates)
-        np.savetxt(f'{args.outdir}/com_heights_{np.round(target, 3)}_{ribose_type}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+        np.savetxt(f'{outdir}/com_heights_{np.round(target, 3)}_{ribose_type}.csv', z_coordinates, fmt='%.5f', delimiter=',')
     else:
         print("No available simulations for this target height")
 
 
-def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
+def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
+
+    nsteps = int(config.get('Simulation Parameters','number steps'))
+    report = int(config.get('Simulation Parameters','report'))
+    outdir = config.get('Output Parameters','outdir')
 
     mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
                     ['DRIB', 'LRIB', 'GUA', "CYT"])
@@ -193,7 +190,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
     ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], target*10, 'z')
     al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], target*10, 'z')
 
-    if(args.verbose):
+    if(config.get('Output Parameters','verbose')=='True'):
         print("Building molecules:", jobid)
 
     #line up the guanine and cytosines so that the molecules face eachother
@@ -203,7 +200,6 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
     c = translate(c,1,'z')
     c = translate(c,4,'x')
     c = translate(c,4,'y')
-    # c = translate(c, 8, 'y')
 
     g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
     g = translate(g, 4.7, axis='x')
@@ -223,8 +219,8 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
 
     sheet_indices.append(make_sheet(1,1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, ribose_type,args))
-    if(args.verbose):
+    sugar_indices.append(spawn_sugar([mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, ribose_type,config))
+    if(config.get('Output Parameters','verbose')=='True'):
         print("Building system:", jobid)
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
     forcefield.registerTemplateGenerator(gaff.generator)
@@ -280,18 +276,18 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
     simulation.minimizeEnergy()
 
     # PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
-    # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', args.report))
+    # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', report))
 
-    simulation.reporters.append(StateDataReporter(stdout, args.report, step=True,
+    simulation.reporters.append(StateDataReporter(stdout, report, step=True,
         potentialEnergy=True, temperature=True, speed=True, time=True))
     
     #need to store the topologies because every sim has a slighlty different number of waters
     model_top = model.getTopology()
 
-    file_handle = open(f"{args.outdir}/traj_{replicate}_{ribose_type}.dcd", 'bw')
+    file_handle = open(f"{outdir}/traj_{replicate}_{ribose_type}.dcd", 'bw')
     dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
-    for step in range(0,args.nsteps, args.report):
-        simulation.step(args.report)
+    for step in range(0,nsteps, report):
+        simulation.step(report)
         state = simulation.context.getState(getPositions=True)
         positions = state.getPositions()
         dcd_file.writeModel(positions)
@@ -299,14 +295,15 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, args):
 
     return model_top
 
-def wham(ribose_type, args):
+def wham(ribose_type, config):
+    outdir = config.get('Output Parameters','outdir')
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt(f'{args.outdir}/heights_{ribose_type}.csv', delimiter=',')
+    target_list = np.loadtxt(f'{outdir}/heights_{ribose_type}.csv', delimiter=',')
 
     for height_index in target_list:
-        height = np.loadtxt(f'{args.outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
+        height = np.loadtxt(f'{outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
         heights.append(height)
         num_conf.append(len(height))
 
@@ -351,11 +348,15 @@ def wham(ribose_type, args):
     return height_PMF, calc_PMF
 
 def main():
-    args = parse_args()
-    gpus = args.ngpus
-    start_z = args.start_z
-    end_z = args.end_z
-    dz = args.dz
+    config = get_config()
+    nsims = int(config.get('Simulation Parameters','number sims'))
+    nsteps = int(config.get('Simulation Parameters','number steps'))
+    report = int(config.get('Simulation Parameters','report'))
+
+    gpus = int(config.get('Umbrella Setup','number gpus'))
+    start_z = float(config.get('Umbrella Setup','start z'))
+    end_z = float(config.get('Umbrella Setup','end z'))
+    dz = float(config.get('Umbrella Setup','dz'))
     jobs = 0
     riboses = ['D','L']
     target = start_z
@@ -372,10 +373,10 @@ def main():
             topology_list = []
             successful_sims = []
 
-            while replicate <= args.nsims:
+            while replicate <= nsims:
                 print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {ribose_type}-ribose')
                 try:
-                    topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, args))
+                    topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, config))
                     successful_sims.append(replicate)
                     target_list.append(target)
                 except KeyboardInterrupt:
@@ -386,7 +387,7 @@ def main():
                 replicate+=1
 
             try:
-                write_com(topology_list, successful_sims, target, ribose_type, args)
+                write_com(topology_list, successful_sims, target, ribose_type, config)
             except Exception as e:
                 print(e)
                 print('No available simulations for this target height')
@@ -398,7 +399,7 @@ def main():
         height_key = f'{ribose_type}_height_PMF'
         calc_key = f'{ribose_type}_calc_PMF'
 
-        PMF[height_key], PMF[calc_key] = wham(ribose_type ,args)
+        PMF[height_key], PMF[calc_key] = wham(ribose_type ,config)
     
     keys = list(PMF.keys())
     print(keys)

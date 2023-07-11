@@ -20,7 +20,6 @@ sheet_config['Output Parameters'] = {
 with open('sheet_config.ini', 'w') as configfile:
     sheet_config.write(configfile)
 
-
 analysis_config = configparser.ConfigParser()
 analysis_config['Input Setup'] = {
 

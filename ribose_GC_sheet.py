@@ -18,6 +18,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 import json
 from simtk.openmm import app
+import configparser
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -34,6 +35,10 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def get_config():
+    config = configparser.ConfigParser()
+    config.read('sheet_config.ini')
+    
 def translate(mol, step, axis='x'):
     if (axis == 'x'):
         mol += [step, 0, 0] * angstrom
@@ -209,7 +214,6 @@ def simulate(jobid, device_idx, args):
 
     sheet_indices.append(make_sheet(args.sh, args.sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
 
-
     make_sheet_random(args.sh, args.sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, args.lconc, step=8)
     if(args.verbose):
         print("Building system:", jobid)
@@ -252,8 +256,6 @@ def simulate(jobid, device_idx, args):
 
     simulation.step(args.nsteps)
 
-    
-    
 def main():
     args = parse_args()
     total_sims = args.nsims

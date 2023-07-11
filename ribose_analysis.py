@@ -12,6 +12,7 @@ import argparse
 from scipy.stats import gaussian_kde
 from scipy.fft import fft, ifft
 import seaborn as sns
+import configparser
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -276,6 +277,9 @@ def hbond_order(D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L):
     plt.tight_layout()
     plt.show()
 
+def color_hbonds(hbonds):
+    pymol.cmd.reinitialize()
+
 def nematic_order(traj):
     dribose_indices_list = []  
     lribose_indices_list = []  
@@ -394,7 +398,7 @@ def main():
             # dribose_heights.extend(dheight)
             # lribose_heights.extend(lheight)
 
-        #     hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
+            hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
         #     D_G.extend(traj_D_G)
         #     D_C.extend(traj_D_C)
         #     D_B.extend(traj_D_B)
@@ -409,9 +413,10 @@ def main():
         #     traj_d_order.extend(traj_d_ord)
         #     traj_l_order .extend(traj_l_ord)
 
-            DRI_sasa, LRI_sasa = sasa(chunk)
-            traj_DRI_sasa.extend(DRI_sasa)
-            traj_LRI_sasa.extend(LRI_sasa)
+            # DRI_sasa, LRI_sasa = sasa(chunk)
+            # traj_DRI_sasa.extend(DRI_sasa)
+            # traj_LRI_sasa.extend(LRI_sasa)
+
 
         # sim_D_G.append(D_G)
         # sim_D_C.append(D_C)
@@ -426,14 +431,16 @@ def main():
         # dribose_order.append(traj_d_order)
         # lribose_order.append(traj_l_order)
 
-        sim_DRI_sasa.append(traj_DRI_sasa)
-        sim_LRI_sasa.append(traj_LRI_sasa)
+        # sim_DRI_sasa.append(traj_DRI_sasa)
+        # sim_LRI_sasa.append(traj_LRI_sasa)
 
-    graph_sasa(sim_DRI_sasa, sim_LRI_sasa)
+    color_hbonds(hbond_counts)
+    # graph_sasa(sim_DRI_sasa, sim_LRI_sasa)
     # hbond_heatmap(hbond_counts)
     # hbond_order(sim_D_G,sim_D_C,sim_D_B,sim_L_G,sim_L_C,sim_L_B,sim_D_D,sim_D_L,sim_L_L)
     # graph_nematic_order(dribose_order, lribose_order)
     # graph_heights(dribose_heights, lribose_heights)
+    print(hbond_counts)
 
 if __name__ == '__main__':
     main()

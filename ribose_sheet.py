@@ -259,7 +259,7 @@ def simulate(jobid, device_idx, config):
 
 def main():
     config = get_config()
-    total_sims = int(config.get('Simulation Setup','number steps'))
+    total_sims = int(config.get('Simulation Setup','number sims'))
     gpus = int(config.get('Simulation Setup','number gpus'))
     proc = int(config.get('Simulation Setup','number processes'))
 

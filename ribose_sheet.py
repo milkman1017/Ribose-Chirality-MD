@@ -19,13 +19,17 @@ from tqdm import tqdm
 import json
 from simtk.openmm import app
 import configparser
+from rdkit import Chem
+from rdkit.Chem import Draw
+
+
 
 def get_config():
     config = configparser.ConfigParser()
     config.read('sheet_config.ini')
     return config
     
-def translate(mol, step, axis='x'):
+def translate_one_axis(mol, step, axis='x'):
     if (axis == 'x'):
         mol += [step, 0, 0] * angstrom
     elif (axis == 'y'):
@@ -34,112 +38,98 @@ def translate(mol, step, axis='x'):
         mol += [0,0,step] *angstrom
     return mol 
 
+def translate_mol(positions, translation):
+    translated_positions = positions + translation
+    return translated_positions 
+
 def rotate(mol, angle, axis='x'):
-    com = [np.average(mol[:,0]), np.average(mol[:,1]), np.average(mol[:,2])]
-    mol = translate(mol, -com[0], axis = 'x') 
-    mol = translate(mol, -com[1], axis = 'y')
-    mol = translate(mol, -com[2], axis = 'z')
+    centroid = np.mean(mol, axis=0)
+    mol = translate_mol(mol, -centroid)
+
     if axis == 'x':
         x = np.array([[1,0,0],
                       [0,np.cos(angle), -np.sin(angle)],
                       [0,np.sin(angle), np.cos(angle)]])
+        mol = np.array(mol)
         mol = mol[:,:]@x 
         mol = mol * angstrom
     elif axis == 'y':
         y = np.array([[np.cos(angle),0,np.sin(angle)],
                       [0,1,0],
                       [-np.sin(angle),0,np.cos(angle)]])
+        mol = np.array(mol)
         mol = mol[:,:]@y
         mol = mol * angstrom
     else:
         z = np.array([[np.cos(angle),-np.sin(angle),0],
                       [np.sin(angle),np.cos(angle),0],
                       [0,0,1]])
+        mol = np.array(mol)
         mol = mol[:,:]@z
         mol = mol * angstrom
 
-    mol = translate(mol, com[0], axis = 'x') 
-    mol = translate(mol, com[1], axis = 'y')
-    mol = translate(mol, com[2], axis = 'z')
+    mol = translate_mol(mol, centroid)
     return mol
 
+def check_overlap(molecule, existing_mols):
+    for existing_mol in existing_mols:
 
-def make_sheet(height, width, tops, poss, model, step=5.0):
-    """Creates an evenly spaced sheet of given molecules and attaches it to openmm modeler.
-    Params
-    ======
-    height (int) - dimension in the x direction to build 2d sheet
-    width  (int) - dimension in the y direction to build 2d sheet
-    top    (list)(openmm.topology) - topology object of molecule
-    pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
-    model  (openmm.modeler)
-    (step) (float) - space between each molecule in sheet
+        for pos1, pos2, in zip(molecule, existing_mol):
+            distance = np.linalg.norm(pos1-pos2)
+
+            if distance < 1:
+                return True
+
+
+# def make_sheet(height, width, tops, poss, model, step=5.0):
+#     sheet_starting_index = model.topology.getNumAtoms()
+#     xspacing = 0
+#     spacing = step * len(tops)
     
-    Returns
-    =======
-    index_coords (list) - (starting index, ending index) of sheet in modeler"""
-    sheet_starting_index = model.topology.getNumAtoms()
-    xspacing = 0
-    spacing = step * len(tops)
-    
-    for j in range(width):
-        for k in range(len(tops)):
-            # x axis
-            pos = translate(poss[k], spacing * xspacing, 'x')
-            model.add(tops[k], pos)
-            for i in range(height):
-                # y axis
-                pos = translate(pos, spacing, 'y')
-                model.add(tops[k], pos)
+#     for j in range(width):
+#         for k in range(len(tops)):
+#             # x axis
+#             pos = translate(poss[k], spacing * xspacing, 'x')
+#             model.add(tops[k], pos)
+#             for i in range(height):
+#                 # y axis
+#                 pos = translate(pos, spacing, 'y')
+#                 model.add(tops[k], pos)
             
-            xspacing += 1
-    return [sheet_starting_index, model.topology.getNumAtoms()]
+    #         xspacing += 1
+    # return [sheet_starting_index, model.topology.getNumAtoms()]
 
-def make_sheet_random(height, width, tops, poss,
-                      model, lconc, step=5):
-    """Creates an evenly spaced sheet of molecules randomly picked from given list
-        and attaches it to openmm modeler.
-    Gives molecule random rotation.
-    Params
-    ======
-    height (int) - dimension in the x direction to build 2d sheet
-    width  (int) - dimension in the y direction to build 2d sheet
-    top    (list)(openmm.topology) - topology object of molecule
-    pos    (list)(np.array, shape=(n,3)) - starting position of the molecule
-    model  (openmm.modeler)
-    (step) (int) - space between each molecule in sheet
+def spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, config):
+    test_mols_start = model.topology.getNumAtoms()
+    sh = int(config.get('Sheet Setup','sheet height'))
+    sw = int(config.get('Sheet Setup','sheet width'))
 
-    Returns
-    =======
-    index_coords (list) - (starting index, ending index) of sheet in modeler"""
-    sheet_starting_index = model.topology.getNumAtoms()
-    # create a list of lconc tops[1]
-    ls = [1] * lconc
-    ds = [0] * (height*width - lconc)
-    idx = [*ls, *ds]
-    np.random.shuffle(idx)
-    idx = np.array(idx)
+    existing_molecules = []
 
-    # precalculate random variables
-    xpos = (np.tile(np.arange(0, width), height)*step -
-            np.random.uniform(-1, 1, size=height*width))
-    ypos = (np.repeat(np.arange(0, height), width)*step -
-            np.random.uniform(-1, 1, size=height*width))
+    boundaries =  [
+        Vec3(sh,0,0),
+        Vec3(0,sw,0),
+        Vec3(0,0,5)
+    ]
+    for num in range(num_test_mols):
+        for mol_name in test_mol_names:
+            pos = test_mols[mol_name]['positions']
+            top = test_mols[mol_name]['topology']
 
-    z_offset = np.random.uniform(-4.5, 2, size=height*width)
-    axis_rotation = np.random.choice(['x', 'y', 'z'], size=height*width)
-    angle = np.deg2rad(np.random.randint(0, 360, size=height*width))
+            translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(2, boundaries[2][2])]) * nanometer
+            pos = translate_mol(pos, translation)
+            pos = rotate(pos, np.deg2rad(np.random.randint(0, 360)), axis = np.random.choice(['x','y','z']))
 
-    for k in range(len(idx)):
-        pos = rotate(poss[idx[k]], angle[k], axis=axis_rotation[k])
-        pos = translate(pos, xpos[k], 'y')
-        pos = translate(pos, ypos[k], 'x')
-        pos = translate(pos, z_offset[k], 'z')
-        model.add(tops[idx[k]], pos)
+            while check_overlap(pos, existing_molecules):
+                translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(2, boundaries[2][2])]) * nanometer
+                pos = translate_mol(pos, translation)
 
-    return [sheet_starting_index, model.topology.getNumAtoms()]
+            existing_molecules.append(pos)
+            model.add(top,pos)
 
-def load_mols(filenames, resnames):
+    return [test_mols_start, model.topology.getNumAtoms()]
+
+def load_test_mols(filenames, resnames):
     """Loads a molecule from file.
     Args
     ====
@@ -147,21 +137,36 @@ def load_mols(filenames, resnames):
     """
     mols = {}
     for filename, resname in zip(filenames, resnames):
-        mol = Molecule.from_file(filename, file_format='sdf')
+        mol = Molecule.from_file(f'./molecules/{filename}', file_format='sdf')
         mol.generate_conformers()
         conf = to_openmm(mol.conformers[0])
         top = mol.to_topology().to_openmm()
         top = md.Topology.from_openmm(top)
         top.residue(0).name = resname
         top = top.to_openmm()
-        mols[filename[:-4]] = {
+        mols[filename] = {
             "mol":mol,
             "topology": top,
             "positions": conf,
             'resname': resname
         }
+
+    #align them closer to the center of unit cell
+    for mol in filenames:
+        pos = mols[mol]['positions']
+        pos = translate_one_axis(pos, 5, 'x')
+        pos = translate_one_axis(pos, 5, 'y')
+
     return mols
 
+def load_sheet_cell(cell_name, cell_res_names):
+    mol = Molecule.from_file(f'./molecules/{cell_name}', file_format='sdf')
+    mol.generate_conformers()
+    conf = to_openmm(mol.conformers[0])
+    top = mol.to_topology().to_openmm()
+    top = md.Topology.from_openmm(top)
+    for residue in top.residues:
+        print(residue.name)
 
 def simulate(jobid, device_idx, config):
     print(device_idx)
@@ -172,63 +177,51 @@ def simulate(jobid, device_idx, config):
     outdir  = config.get('Output Parameters','output directory')
     report = int(config.get('Output Parameters','report interval'))
     nsteps = int(config.get('Simulation Setup','number steps'))
+    test_mol_names = config.get('Sheet Setup','test molecules').split(',')
+    test_resnames = config.get('Sheet Setup','test resnames').split(',')
+    num_test_mols = int(config.get('Sheet Setup','num of each mol'))
+    cell_name = config.get('Sheet Setup','crystal structure')
+    cell_res_names = config.get('Sheet Setup','crystal resnames')
 
-    mols = load_mols(["aD-ribopyro.sdf", 'aL-ribopyro.sdf', 'guanine.sdf', 'cytosine.sdf'], 
-                    ['DRIB', 'LRIB', 'GUA', "CYT"])
+    test_mols = load_test_mols(test_mol_names, test_resnames)
+    test_mol_indices = []
 
-    #generate residue template 
-    gaff = GAFFTemplateGenerator(molecules = [mols[name]["mol"] for name in mols.keys()])
-    #move above and to middle of sheet
-    ad_ribose_conformer = translate(mols["aD-ribopyro"]["positions"], 14, 'z')
-    ad_ribose_conformer = translate(ad_ribose_conformer, 5, 'y')
-    ad_ribose_conformer = translate(ad_ribose_conformer, 5, 'x')
-
-    al_ribose_conformer = translate(mols["aL-ribopyro"]["positions"], 14, 'z')
-    al_ribose_conformer = translate(al_ribose_conformer, 5, 'y')
-    al_ribose_conformer = translate(al_ribose_conformer, 5, 'x')
-    if(config.get('Output Parameters','verbose')=='True'):
-        print("Building molecules:", jobid)
-
-    #line up the guanine and cytosines so that the molecules face eachother
-    c = rotate(mols["cytosine"]["positions"], np.deg2rad(300), axis = 'z') 
-    c = rotate(c, np.deg2rad(180), axis='y')
-    c = rotate(c, np.deg2rad(190), axis='x')
-    c = translate(c,1,'z')
-    c = translate(c,4,'x')
-    c = translate(c,4,'y')
-
-    g = rotate(mols["guanine"]["positions"], np.deg2rad(-50), axis = 'z')
-    g = translate(g, 4.7, axis='x')
-    g = translate(g, 4, 'y')
-    g = translate(g, 1, 'z')
+    unit_cell = load_sheet_cell(cell_name, cell_res_names)
 
     # initializing the modeler requires a topology and pos
     # we immediately empty the modeler for use later
-
-    model = Modeller(mols["guanine"]["topology"], g) 
+    model = Modeller(test_mols[test_mol_names[0]]['topology'],test_mols[test_mol_names[0]]['positions'])
     model.delete(model.topology.atoms())
 
+    #generate residue template 
+    molecules = [test_mols[name]["mol"] for name in test_mols.keys()]
+    gaff = GAFFTemplateGenerator(molecules = molecules)
+
+    if(config.get('Output Parameters','verbose')=='True'):
+        print("Building molecules:", jobid)
+
     #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
-    sheet_indices = []
+    # sheet_indices = []
+    # sheet_indices.append(make_sheet(sh, sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.5))
+    
+    test_mol_indices.append(spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, config))
 
-    sheet_indices.append(make_sheet(sh, sw//2 + 1, [mols["guanine"]["topology"], mols["cytosine"]["topology"]], [g, c], model, step=3.3))
-
-    make_sheet_random(sh, sw, [mols["aD-ribopyro"]["topology"], mols["aL-ribopyro"]["topology"]], [ad_ribose_conformer, al_ribose_conformer], model, lconc, step=8)
     if(config.get('Output Parameters','verbose') == 'True'):
         print("Building system:", jobid)
+
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
     forcefield.registerTemplateGenerator(gaff.generator)
 
     box_size = [
-        Vec3(sh+0.5,0,0),
-        Vec3(0,sw+0.5,0),
-        Vec3(0,0,6.5)
+        Vec3(sh,0,0),
+        Vec3(0,sw,0),
+        Vec3(0,0,7)
     ]
 
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sh,sw,6))
+    # model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sh,sw,6))
     model.topology.setPeriodicBoxVectors(box_size)
 
-    system = forcefield.createSystem(model.topology,nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
+    system = forcefield.createSystem(model.topology,nonbondedMethod=NoCutoff, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
 
     # create position restraints (thanks peter eastman https://gist.github.com/peastman/ad8cda653242d731d75e18c836b2a3a5)
     restraint = CustomExternalForce('k*((x-x0)^2+(y-y0)^2+(z-z0)^2)')
@@ -238,9 +231,9 @@ def simulate(jobid, device_idx, config):
     restraint.addPerParticleParameter('y0')
     restraint.addPerParticleParameter('z0')
 
-    for start, stop in sheet_indices:
-        for i in range(start, stop):
-            restraint.addParticle(i, model.positions[i])
+    # for start, stop in sheet_indices:
+    #     for i in range(start, stop):
+    #         restraint.addParticle(i, model.positions[i])
 
     integrator = LangevinMiddleIntegrator(300*kelvin, 1/picosecond, 0.004*picoseconds)
     model.addExtraParticles(forcefield)
@@ -269,6 +262,7 @@ def main():
     total_sims = int(config.get('Simulation Setup','number steps'))
     gpus = int(config.get('Simulation Setup','number gpus'))
     proc = int(config.get('Simulation Setup','number processes'))
+
     jobs = 0
     processes = []
 

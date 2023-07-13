@@ -72,14 +72,24 @@ def rotate(mol, angle, axis='x'):
     mol = translate_mol(mol, centroid)
     return mol
 
-def check_overlap(molecule, existing_mols):
-    for existing_mol in existing_mols:
+def check_overlap(pos, existing_molecules, boundaries):
+    boundaries = np.asarray(boundaries) * angstrom * 10  #need *10 to convert from nm to angstrom
+    for existing_pos in existing_molecules:
+        dx = pos[0] - existing_pos[0]
+        dy = pos[1] - existing_pos[1]
+        dz = pos[2] - existing_pos[2]
 
-        for pos1, pos2, in zip(molecule, existing_mol):
-            distance = np.linalg.norm(pos1-pos2)
+        # account for periodic boundaries
+        dx -= np.round(dx / boundaries[0][0]) * boundaries[0][0] 
+        dy -= np.round(dy / boundaries[1][1]) * boundaries[1][1]
+        dz -= np.round(dz / boundaries[2][2]) * boundaries[2][2] 
 
-            if distance < 1:
-                return True
+        if np.all(np.abs(dx) < 10) and np.all(np.abs(dy) < 10) and np.all(np.abs(dz) < 10):
+            # The new molecule is within 1 nm in all dimensions of an existing molecule
+            return True
+        
+    return False
+
 
 def load_test_mols(filenames, resnames):
     """Loads a molecule from file.
@@ -103,41 +113,33 @@ def load_test_mols(filenames, resnames):
             'resname': resname
         }
 
-    #align them closer to the center of unit cell
-    for mol in filenames:
-        pos = mols[mol]['positions']
-        pos = translate_one_axis(pos, 5, 'x')
-        pos = translate_one_axis(pos, 5, 'y')
-
     return mols
 
-def spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, config):
+def spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, sheet_x, sheet_y, config):
     test_mols_start = model.topology.getNumAtoms()
-    sh = int(config.get('Sheet Setup','sheet height'))
-    sw = int(config.get('Sheet Setup','sheet width'))
-
     existing_molecules = []
-
-    boundaries =  [
-        Vec3(sh,0,0),
-        Vec3(0,sw,0),
-        Vec3(0,0,5)
+    boundaries = [
+        Vec3(sheet_x - 0.5, 0, 0),
+        Vec3(0, sheet_y - 0.5, 0),
+        Vec3(0, 0, 9.5)
     ]
+
     for num in range(num_test_mols):
         for mol_name in test_mol_names:
             pos = test_mols[mol_name]['positions']
             top = test_mols[mol_name]['topology']
 
-            translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(2, boundaries[2][2])]) * nanometer
-            pos = translate_mol(pos, translation)
-            pos = rotate(pos, np.deg2rad(np.random.randint(0, 360)), axis = np.random.choice(['x','y','z']))
+            translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(boundaries[2][2])]) * nanometer
+            pos_temp = translate_mol(pos, translation)
+            pos_temp = rotate(pos_temp, np.deg2rad(np.random.randint(0, 360)), axis=np.random.choice(['x', 'y', 'z']))
 
-            while check_overlap(pos, existing_molecules):
-                translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(2, boundaries[2][2])]) * nanometer
-                pos = translate_mol(pos, translation)
+            while check_overlap(pos_temp, existing_molecules, boundaries):
+                translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(boundaries[2][2])]) * nanometer
+                pos_temp = translate_mol(pos, translation)
+                pos_temp = rotate(pos_temp, np.deg2rad(np.random.randint(0, 360)), axis=np.random.choice(['x', 'y', 'z']))
 
-            existing_molecules.append(pos)
-            model.add(top,pos)
+            existing_molecules.append(pos_temp)
+            model.add(top, pos_temp)
 
     return [test_mols_start, model.topology.getNumAtoms()]
 
@@ -198,9 +200,6 @@ def make_sheet(mol, model, config):
 def simulate(jobid, device_idx, config):
     print(device_idx)
 
-    sh = int(config.get('Sheet Setup','sheet height'))
-    sw = int(config.get('Sheet Setup','sheet width'))
-    lconc = int(config.get('Sheet Setup','lconc'))
     outdir  = config.get('Output Parameters','output directory')
     report = int(config.get('Output Parameters','report interval'))
     nsteps = int(config.get('Simulation Setup','number steps'))
@@ -233,7 +232,7 @@ def simulate(jobid, device_idx, config):
     sheet_indices.append(sheet_index)
     
     test_mol_indices = []
-    test_mol_indices.append(spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, config))
+    test_mol_indices.append(spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, sheet_x, sheet_y, config))
 
     if(config.get('Output Parameters','verbose') == 'True'):
         print("Building system:", jobid)
@@ -244,10 +243,10 @@ def simulate(jobid, device_idx, config):
     box_size = [
         Vec3(sheet_x+.2,0,0),
         Vec3(0,sheet_y+.2,0),
-        Vec3(0,0,7)
+        Vec3(0,0,10)
     ] 
 
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sheet_x-0.2, sheet_y-0.2, 6.8))
+    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sheet_x, sheet_y, 9.95))
     model.topology.setPeriodicBoxVectors(box_size)
 
     system = forcefield.createSystem(model.topology,nonbondedMethod=PME, nonbondedCutoff=1*nanometer, constraints=HBonds)

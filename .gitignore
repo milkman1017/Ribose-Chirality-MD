@@ -6,7 +6,6 @@ cycle.sh
 *.csv
 *.json
 *.txt
-*.png
 *.dcd
 WHAM
 topology*

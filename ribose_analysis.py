@@ -21,34 +21,30 @@ def get_config():
 def compute_heights(traj, sheet_resnames, mol):
     sheet_atoms = traj.topology.select(f'resn {" or resn ".join(sheet_resnames)}')
 
-    test_mol_atoms = traj.topology.select(f'resn {mol}')
+    traj_heights = []
 
-    traj_height = md.compute_distances(traj, np.array([[sheet_atom, test_mol_atom] for sheet_atom in sheet_atoms for test_mol_atom in test_mol_atoms]))[:,0]
+    for residue in traj.topology.residues: 
+        if residue.name == mol:
 
-    return traj_height
+            mol_atoms = [atom.index for atom in residue.atoms]
+            traj_height = np.mean(md.compute_distances(traj, np.array([[sheet_atom, test_mol_atom] for sheet_atom in sheet_atoms for test_mol_atom in mol_atoms])))
+            traj_heights.append(traj_height)
+
+    return traj_heights
     
 def graph_heights(heights, config):
-    print('graphing')
     test_resnames = config.get('Input Setup','test resnames').split(',')
 
     fig, ax = plt.subplots()
 
     for i, mol_height in enumerate(heights):
-        print(i)
         sns.kdeplot(data=mol_height, linewidth=1, label = test_resnames[i])
 
     plt.legend()
+    plt.title('PDF of Distance to Sheet')
     plt.xlabel('Distance to Sheet')
     plt.ylabel('Probability Density')
     plt.show()
-
-    # sns.kdeplot(data=dribose_heights, linewidth=1, color='b', label='D-Ribose')
-    # sns.kdeplot(data=lribose_heights, linewidth=1, color='r', label='L-Ribose')
-    # ax.legend(['D-Ribose','L-Ribose'])
-    # ax.set_xlabel('Height Above Sheet (nm)')
-    # ax.set_ylabel('PDF')
-    # ax.set_title('Probability Density of height of ribose')
-    # plt.show()
 
 def compute_hbonds(chunk, hbond_counts):
 
@@ -262,92 +258,62 @@ def hbond_order(D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L):
     plt.tight_layout()
     plt.show()
 
-def nematic_order(traj):
-    dribose_indices_list = []  
-    lribose_indices_list = []  
+def compute_nematic_order(traj, nematic_order, test_resnames, sim_num):
+    frames = traj.time
 
-    for residue in traj.topology.residues:
-        if residue.name == 'DRI':
-            dribose_indices = [atom.index for atom in residue.atoms]
-            dribose_indices_list.append(dribose_indices) 
-        elif residue.name == 'LRI':
-            lribose_indices = [atom.index for atom in residue.atoms]
-            lribose_indices_list.append(lribose_indices) 
+    for i, mol in enumerate(test_resnames):
+        mol_atoms = []
+        
+        for residue in traj.topology.residues:
+            if residue.name == mol:
+                mol_atoms.append([atom.index for atom in residue.atoms])
 
-    dribose_order_list = [] 
-    lribose_order_list = []  
+        param = md.compute_nematic_order(traj, indices=mol_atoms)
+        
+        nematic_order[traj.time, i, sim_num] += param
 
-    for dribose_indices in dribose_indices_list:
-        dribose_order = md.compute_nematic_order(traj, indices=dribose_indices_list)
-        dribose_order_list.append(dribose_order) 
+    return nematic_order
 
-    for lribose_indices in lribose_indices_list:
-        lribose_order = md.compute_nematic_order(traj, indices=lribose_indices_list)
-        lribose_order_list.append(lribose_order)
-
-    dribose_order_list = np.mean(dribose_order_list, axis=0)
-    lribose_order_list = np.mean(lribose_order_list, axis=0)
-
-    return dribose_order_list, lribose_order_list
-
-def graph_nematic_order(dribose_order, lribose_order):
-    dribose_order = np.mean(dribose_order, axis=0)
-    lribose_order = np.mean(lribose_order, axis=0)
-
-    time = np.arange(len(dribose_order)) * 0.004
-
-    fig, ax = plt.subplots(2,1)
-    ax[0].plot(time, dribose_order, color='b', linewidth=1, label='D-ribose')
-    ax[0].plot(time, lribose_order, color='r', linewidth=1, label='L-ribose')
-    ax[0].set_xlabel('Time (ns)')
-    ax[0].set_ylabel('Nematic Order Parameter')
-    ax[0].legend()
-
-    ax[1].hist(dribose_order, color='blue', histtype='step', label='D-Ribose',density=True, bins='auto')
-    ax[1].hist(lribose_order, color='r', histtype='step', label='L-ribose',density=True, bins='auto')
-    ax[1].set_xlabel('Nematic Order Parameter')
-    ax[1].legend()
+def graph_nematic_order(nematic_order, test_resnames):
+    nematic_order = np.concatenate(nematic_order, axis=1)
     
-    plt.suptitle('Nematic Order of Ribose Enantiomers')
+    fig, ax = plt.subplots()
+
+    for i, mol in enumerate(test_resnames):
+
+        sns.kdeplot(data=nematic_order[i,:], linewidth=1, label=mol)
+    
+    plt.title('Nematic Order Distribution')
+    plt.xlabel('Nematic Order Parameter')
+    plt.ylabel('Probability Density')
+    plt.legend()
     plt.show()
-
-def sasa(traj):
-    DRI_res_indices = []
-    LRI_res_indices = []
-
-    for residue in traj.topology.residues: 
-        if residue.name == 'DRI':
-            DRI_res_indices.append(residue.index)
-        elif residue.name == 'LRI':
-            LRI_res_indices.append(residue.index)
-
+        
+def compute_sasa(traj, test_res_names, SASA):
     sasa = md.shrake_rupley(traj, mode='residue')
+
+    for i, mol in enumerate(test_res_names):
+        mol_res_indices = []
+        for residue in traj.topology.residues:
+            if residue.name == mol:
+                mol_res_indices.append(residue.index)
     
-    DRI_sasa = sasa[:, DRI_res_indices]
-    LRI_sasa = sasa[:, LRI_res_indices]
+        mol_sasa = sasa[:,mol_res_indices]
 
-    return DRI_sasa, LRI_sasa
+        SASA[i].extend(mol_sasa)
 
-def autocorr(x):
-    "Compute an autocorrelation with numpy"
-    x = x - np.mean(x)
-    result = np.correlate(x, x, mode='full')
-    result = result[result.size//2:]
-    return result / result[0]
+    return SASA
 
-def graph_sasa(DRI_sasa, LRI_sasa):
-    DRI_sasa = np.array(DRI_sasa)
-    LRI_sasa = np.array(LRI_sasa)
+def graph_sasa(SASA, test_resnames):
+    fig, ax = plt.subplots()
 
-    DRI_sasa_tot_sims = np.concatenate(DRI_sasa, axis=1)
-    LRI_sasa_tot_sims = np.concatenate(LRI_sasa, axis=1)
+    for i, mol in enumerate(test_resnames):
+        #SASA is a list of num_res arrays. each array is of length num_of_mols X frames so need to concatentate to convert into a 1D array
+        mol_sasa = np.concatenate(SASA[i])
+        
+        sns.kdeplot(data=mol_sasa, linewidth=1, label=mol)
 
-    DRI_sasa_tot =np.concatenate(DRI_sasa_tot_sims)
-    LRI_sasa_tot = np.concatenate(LRI_sasa_tot_sims)
-
-    sns.kdeplot(data=DRI_sasa_tot, linewidth=1, color='b', label='D-Ribose')
-    sns.kdeplot(data=LRI_sasa_tot, linewidth=1, color='r', label='L-Ribose')
-    plt.yscale('log')
+    # plt.yscale('log')
     plt.xlabel('Solvent Accessible Surface Area (nm^2)')
     plt.ylabel('log density')
     plt.title('KDE of SASA')
@@ -358,15 +324,23 @@ def main():
     config = get_config()
     sims = int(config.get('Analyses','number of sims'))
     nsteps = int(config.get('Input Setup','number steps'))
-    report = int(config.get('Input Setup','report interval'))
     cell_name = config.get('Input Setup','crystal structure')
     sheet_resnames = config.get('Input Setup','crystal resnames').split(',')
     test_resnames = config.get('Input Setup','test resnames').split(',')
+    report = int(config.get('Input Setup','report interval'))
 
     file_path = config.get('Input Setup','file path')
     outdir = config.get('Output Parameters','output directory')
 
+    #these need to be initialized as lists of lists since list lengths are dynamic
+    #if the number of each mols are different then an array cant be used as well since the columns would be of different legnths
     heights = [[] for _ in range(len(test_resnames))]
+    SASA = [[] for _ in range(len(test_resnames))]
+
+
+    #these can be initalized as arrays as each mol type will give only one output so the size of the array is easily known prior to calculating
+    #these give outputs of length one no matter the number of mols so an array works
+    nematic_order = np.zeros((int(nsteps/report), len(test_resnames), sims))
 
     for sim_number in range(sims):
         print('Analyzing sim number', sim_number)
@@ -375,8 +349,16 @@ def main():
                             top=f'{file_path}/traj_{sim_number}_sheet_{cell_name[:-4]}_mols_{"_".join(test_resnames)}_steps_{nsteps}.pdb')
 
         for chunk in traj:
-            for i, mol in enumerate(test_resnames):
-                heights[i].extend(compute_heights(chunk, sheet_resnames, mol))
+
+            if config.get('Analyses','height density') == 'True':
+                for i, mol in enumerate(test_resnames):
+                    heights[i].extend(compute_heights(chunk, sheet_resnames, mol))
+
+            if config.get('Analyses','Nematic Order Parameter') == 'True':
+                nematic_order = compute_nematic_order(chunk, nematic_order, test_resnames, sim_number)
+
+            if config.get('Analyses','Solvent Accessible Surface Area') == 'True':
+                SASA = compute_sasa(chunk, test_resnames, SASA)
 
         #     hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
         #     D_G.extend(traj_D_G)
@@ -389,15 +371,6 @@ def main():
         #     D_L.extend(traj_D_L)
         #     L_L.extend(traj_L_L)
 
-        #     traj_d_ord, traj_l_ord = nematic_order(chunk)
-        #     traj_d_order.extend(traj_d_ord)
-        #     traj_l_order .extend(traj_l_ord)
-
-        #     DRI_sasa, LRI_sasa = sasa(chunk)
-        #     traj_DRI_sasa.extend(DRI_sasa)
-        #     traj_LRI_sasa.extend(LRI_sasa)
-
-
         # sim_D_G.append(D_G)
         # sim_D_C.append(D_C)
         # sim_D_B.append(D_B)
@@ -408,18 +381,18 @@ def main():
         # sim_D_L.append(D_L)
         # sim_L_L.append(L_L)
 
-        # dribose_order.append(traj_d_order)
-        # lribose_order.append(traj_l_order)
-
-        # sim_DRI_sasa.append(traj_DRI_sasa)
-        # sim_LRI_sasa.append(traj_LRI_sasa)
-
-
-    # graph_sasa(sim_DRI_sasa, sim_LRI_sasa)
     # hbond_heatmap(hbond_counts)
     # hbond_order(sim_D_G,sim_D_C,sim_D_B,sim_L_G,sim_L_C,sim_L_B,sim_D_D,sim_D_L,sim_L_L)
-    # graph_nematic_order(dribose_order, lribose_order)
-    graph_heights(heights, config)
+
+    if config.get('Analyses','height density') == 'True':
+        graph_heights(heights, config)
+
+    if config.get('Analyses','Nematic Order Parameter') == 'True':
+        graph_nematic_order(nematic_order, test_resnames)
+
+    if config.get('Analyses','Solvent Accessible Surface Area') == 'True':
+        graph_sasa(SASA, test_resnames)
+
 
 if __name__ == '__main__':
     main()

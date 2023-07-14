@@ -277,10 +277,10 @@ def simulate(jobid, device_idx, config):
     simulation.minimizeEnergy()
 
     simulation.reporters.append(StateDataReporter(f"{outdir}/output{jobid}.txt", report, step=True, potentialEnergy=True, temperature=True, speed=True))
-    with open (f'{outdir}/traj_{jobid}_sheet_{cell_name[:-4]}_mols_{test_resnames}_steps_{nsteps}.pdb','w') as topology_file:
+    with open (f'{outdir}/traj_{jobid}_sheet_{cell_name[:-4]}_mols_{"_".join(test_resnames)}_steps_{nsteps}.pdb','w') as topology_file:
         PDBFile.writeFile(simulation.topology, model.positions,topology_file)
 
-    dcd_reporter = DCDReporter(f'{outdir}/traj_{jobid}_sheet_{cell_name[:-4]}_mols_{test_resnames}_steps_{nsteps}.dcd',report)
+    dcd_reporter = DCDReporter(f'{outdir}/traj_{jobid}_sheet_{cell_name[:-4]}_mols_{"_".join(test_resnames)}_steps_{nsteps}.dcd',report)
     simulation.reporters.append(dcd_reporter)
 
     simulation.step(nsteps)

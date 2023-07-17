@@ -12,6 +12,7 @@ from scipy.stats import gaussian_kde
 from scipy.fft import fft, ifft
 import seaborn as sns
 import configparser
+import pandas as pd
 
 def get_config():
     config = configparser.ConfigParser()
@@ -46,73 +47,30 @@ def graph_heights(heights, config):
     plt.ylabel('Probability Density')
     plt.show()
 
-def compute_hbonds(chunk, hbond_counts):
+def compute_hbonds(chunk, hbond_data, sim_number, config):
+    test_resnames = config.get('Input Setup', 'test resnames').split(',')
+    sheet_mols = config.get('Input Setup', 'crystal resnames').split(',')
 
-    D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L = [],[],[],[],[],[],[],[],[]
+    total_mols = test_resnames + sheet_mols
 
-    for frame in chunk:
-        DG = 0
-        DC = 0
-        LG = 0
-        LC = 0
-        DD = 0
-        DL = 0
-        LL = 0
-        hbonds = md.baker_hubbard(frame,exclude_water=True)
-        
-        #get hbond counts 
-        for hbond in hbonds:
-            atom1, atom2 = hbond[0], hbond[2]
-            res1, res2 = frame.topology.atom(atom1).residue, frame.topology.atom(atom2).residue
-            atom1_index, atom2_index = frame.topology.atom(atom1).index % res1.n_atoms, frame.topology.atom(atom2).index % res2.n_atoms
+    for i, frame in enumerate(chunk):
+        hbonds = md.baker_hubbard(frame, exclude_water=True)
 
-            if (res1.name == 'G' and res2.name == 'DRI') or (res1.name == 'DRI' and res2.name == 'G'):
-                DG += 1
-            elif (res1.name == 'C' and res2.name == 'DRI') or (res1.name == 'DRI' and res2.name == 'C'):
-                DC+= 1
-            elif (res1.name == 'G' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'G'):
-                LG += 1
-            elif (res1.name == 'C' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'C'):
-                LC += 1
-            elif (res1.name == 'DRI' and res2.name == 'DRI'):
-                DD += 1
-            elif (res1.name == 'DRI' and res2.name == 'LRI') or (res1.name == 'LRI' and res2.name == 'DRI'):
-                DL += 1
-            elif (res1.name == 'LRI' and res2.name == 'LRI'):
-                LL += 1
+        for mol_1 in test_resnames:
+            for mol_2 in total_mols:
+                count = 0  # Initialize the hydrogen bond count for each pair of molecules
 
-            hbond_key = f'{res1.name}-{res2.name}'
-            hbond_count_key = f"{atom1_index}-{atom2_index}"
+                for bond in hbonds:
+                    donor, acceptor = bond[0], bond[2]
+                    res1, res2 = frame.topology.atom(donor).residue, frame.topology.atom(acceptor).residue
 
-            if hbond_key not in hbond_counts:
-                hbond_counts[hbond_key] = dict()
-            if hbond_count_key not in hbond_counts[hbond_key]:
-                hbond_counts[hbond_key][hbond_count_key]=0
-            hbond_counts[hbond_key][hbond_count_key] += 1
+                    if res1.name == mol_1 and res2.name == mol_2:
+                        count += 1  # Increment the count if a hydrogen bond is found
 
-        D_G.append(DG)
-        D_C.append(DC)
-        D_B.append(DG+DC)
-        L_G.append(LG)
-        L_C.append(LC)
-        L_B.append(LG+LC)
-        D_D.append(DD)
-        D_L.append(DL)
-        L_L.append(LL)
-            
-    return hbond_counts, D_G, D_C, D_B, L_G, L_C, L_B, D_D, D_L, L_L
+                # Assign the count to the corresponding cell in the DataFrame
+                hbond_data.loc[i, (sim_number, mol_1, mol_2)] = count
 
-def ribose_label_sort(item):
-    if item.startswith('DRI'):
-        return (0, int(item[3:]))
-    elif item.startswith('LRI'):
-        return (1, int(item[3:]))
-    elif item.startswith('C'):
-        return (2, int(item[1:]))
-    elif item.startswith('G'):
-        return (3, int(item[1:]))
-    else:
-        return (4, int(item[2:]))
+    return hbond_data
 
 def hbond_heatmap(hbond_counts):
 
@@ -195,64 +153,31 @@ def hbond_heatmap(hbond_counts):
     plt.suptitle('Hydrogen Bond Heat Map')
     plt.show()
 
-def hbond_order(D_G,D_C,D_B,L_G,L_C,L_B,D_D,D_L,L_L):
-    D_G = np.mean(D_G,axis=0)
-    D_C = np.mean(D_C, axis=0)
-    D_B = np.mean(D_B, axis=0)
-    L_G = np.mean(L_G, axis=0)
-    L_C = np.mean(L_C, axis=0)
-    L_B = np.mean(L_B, axis=0)
-    D_D = np.mean(D_D, axis=0)
-    D_L = np.mean(D_L, axis=0)
-    L_L = np.mean(L_L, axis=0)
+def hbond_counts_distribution(hbonds, config):
+    test_mols = config.get('Input Setup','test resnames').split(',')
+    sheet_mols = config.get('Input Setup','crystal resnames').split(',')
+    num_sims = int(config.get('Analyses','number of sims'))
 
-    time = np.arange(len(D_G)) * 0.004
+    sheet_hbonds = {}
 
-    fig, ax = plt.subplots(3,3)
-    ax[0,0].plot(time, D_G, linewidth=1, color='b', label='D-Ribose')
-    ax[0,0].plot(time, L_G, linewidth=1, color='r', label='L-Ribose')
-    ax[0,0].set_title('Guanine H-Bonds')
-    ax[0,0].set_xlabel('Time (ns)')
-    ax[0,0].set_ylabel('Count')
+    #aggregate data from all sims
+    for i in range(num_sims):
+        for test_mol in test_mols:
+            for sheet_mol in sheet_mols:
+                
+                if (test_mol, sheet_mol) not in sheet_hbonds:
+                    sheet_hbonds[test_mol, sheet_mol] = hbonds[i, test_mol, sheet_mol].to_numpy()
+                else:
+                    sheet_hbonds[test_mol, sheet_mol] = np.append(sheet_hbonds[test_mol, sheet_mol], hbonds[i,test_mol, sheet_mol].to_numpy())
+    
+    fig, ax = plt.subplots(len(sheet_mols))
 
-    ax[1,0].plot(time, D_C, linewidth=1, color='b', label='D-Ribose')
-    ax[1,0].plot(time, L_C, linewidth=1, color='r', label='L-Ribose')
-    ax[1,0].set_title('Cytosine H-Bonds')
-    ax[1,0].set_xlabel('Time (ns)')
-    ax[1,0].set_ylabel('Count')
-
-    ax[2,0].plot(time, D_B, linewidth=1, color='b', label='D-Ribose')
-    ax[2,0].plot(time, L_B, linewidth=1, color='r', label='L-Ribose')
-    ax[2,0].set_title('Guanine and Cytosine H-Bonds')
-    ax[2,0].set_xlabel('Time (ns)')
-    ax[2,0].set_ylabel('Count')
-
-
-    ax[0,1].hist(D_G, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
-    ax[0,1].hist(L_G, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
-    ax[0,1].set_title('Distribution of Guanine H-Bonds')
-    ax[0,1].set_xlabel('Number of H-Bonds')
-
-    ax[1,1].hist(D_C, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
-    ax[1,1].hist(L_C, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
-    ax[1,1].set_title('Distribution of Cytosine H-Bonds')
-    ax[1,1].set_xlabel('Number of H-Bonds')
-
-    ax[2,1].hist(D_B, histtype='step', density=True, bins='auto', color='b', label='D-Ribose')
-    ax[2,1].hist(L_B, histtype='step', density=True, bins='auto', color='r', label='L-Ribose')
-    ax[2,1].set_title('Distribution of Sheet H-Bonds')
-    ax[2,1].set_xlabel('Number of H-Bonds')
-
-    ax[0,2].plot(time, D_D, linewidth=1, color='b', label='D-Ribose')
-    ax[0,2].plot(time, L_L, linewidth=1, color='r', label='L-Ribose')
-    ax[0,2].set_title('Self-Ribose H-Bonds')
-    ax[0,2].set_xlabel('Time (ns)')
-    ax[0,2].set_ylabel('Count')
-
-    ax[1,2].plot(time, D_L, linewidth=1, color='m')
-    ax[1,2].set_title('D to L Ribose H-Bonds')
-    ax[1,2].set_xlabel('Time (ns)')
-    ax[1,2].set_ylabel('Count')
+    for i, sheet_mol in enumerate(sheet_mols):
+        for test_mol in test_mols:
+            ax[i].hist(sheet_hbonds[test_mol, sheet_mol], label=test_mol, linewidth=1, bins='auto', histtype='step', density=True)
+            ax[i].set_title(f'Hydrogen bonding to residue: {sheet_mol}')
+            ax[i].set_xlabel('Number of H bonds')
+            ax[i].set_ylabel('Density')
 
     plt.legend()
     plt.tight_layout()
@@ -310,10 +235,10 @@ def graph_sasa(SASA, test_resnames):
     for i, mol in enumerate(test_resnames):
         #SASA is a list of num_res arrays. each array is of length num_of_mols X frames so need to concatentate to convert into a 1D array
         mol_sasa = np.concatenate(SASA[i])
-        
+
         sns.kdeplot(data=mol_sasa, linewidth=1, label=mol)
 
-    # plt.yscale('log')
+    plt.yscale('log')
     plt.xlabel('Solvent Accessible Surface Area (nm^2)')
     plt.ylabel('log density')
     plt.title('KDE of SASA')
@@ -328,6 +253,7 @@ def main():
     sheet_resnames = config.get('Input Setup','crystal resnames').split(',')
     test_resnames = config.get('Input Setup','test resnames').split(',')
     report = int(config.get('Input Setup','report interval'))
+    total_mols = test_resnames + sheet_resnames
 
     file_path = config.get('Input Setup','file path')
     outdir = config.get('Output Parameters','output directory')
@@ -337,6 +263,10 @@ def main():
     heights = [[] for _ in range(len(test_resnames))]
     SASA = [[] for _ in range(len(test_resnames))]
 
+    #initalize hbonds as pandas dataframe
+    hbond_columns = pd.MultiIndex.from_product([range(sims), test_resnames, total_mols],
+                                         names=['sim_number', 'mol_1', 'mol_2'])
+    hbonds = pd.DataFrame(columns=hbond_columns)
 
     #these can be initalized as arrays as each mol type will give only one output so the size of the array is easily known prior to calculating
     #these give outputs of length one no matter the number of mols so an array works
@@ -360,29 +290,10 @@ def main():
             if config.get('Analyses','Solvent Accessible Surface Area') == 'True':
                 SASA = compute_sasa(chunk, test_resnames, SASA)
 
-        #     hbond_counts, traj_D_G, traj_D_C, traj_D_B, traj_L_G, traj_L_C, traj_L_B, traj_D_D, traj_D_L, traj_L_L = compute_hbonds(chunk,hbond_counts)
-        #     D_G.extend(traj_D_G)
-        #     D_C.extend(traj_D_C)
-        #     D_B.extend(traj_D_B)
-        #     L_G.extend(traj_L_G)
-        #     L_C.extend(traj_L_C)
-        #     L_B.extend(traj_L_B)
-        #     D_D.extend(traj_D_D)
-        #     D_L.extend(traj_D_L)
-        #     L_L.extend(traj_L_L)
-
-        # sim_D_G.append(D_G)
-        # sim_D_C.append(D_C)
-        # sim_D_B.append(D_B)
-        # sim_L_G.append(L_G)
-        # sim_L_C.append(L_C)
-        # sim_L_B.append(L_B)
-        # sim_D_D.append(D_D)
-        # sim_D_L.append(D_L)
-        # sim_L_L.append(L_L)
+            if config.get('Analyses','H-Bond Counts')=='True':
+                hbonds = compute_hbonds(chunk, hbonds, sim_number, config)
 
     # hbond_heatmap(hbond_counts)
-    # hbond_order(sim_D_G,sim_D_C,sim_D_B,sim_L_G,sim_L_C,sim_L_B,sim_D_D,sim_D_L,sim_L_L)
 
     if config.get('Analyses','height density') == 'True':
         graph_heights(heights, config)
@@ -392,6 +303,10 @@ def main():
 
     if config.get('Analyses','Solvent Accessible Surface Area') == 'True':
         graph_sasa(SASA, test_resnames)
+    
+    if config.get('Analyses','H-Bond Counts') == 'True':
+        hbond_counts_distribution(hbonds, config)
+
 
 
 if __name__ == '__main__':

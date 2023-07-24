@@ -30,7 +30,7 @@ def get_config():
     config.read('umbrella_config.ini')
     return config
     
-def translate_one_axis(mol, step, axis='x'):
+def translate(mol, step, axis='x'):
     if (axis == 'x'):
         mol += [step, 0, 0] * angstrom
     elif (axis == 'y'):
@@ -39,117 +39,87 @@ def translate_one_axis(mol, step, axis='x'):
         mol += [0,0,step] *angstrom
     return mol 
 
-def translate_mol(positions, translation):
-    translated_positions = positions + translation
-    return translated_positions 
-
 def rotate(mol, angle, axis='x'):
-    centroid = np.mean(mol, axis=0)
-    mol = translate_mol(mol, -centroid)
-
+    com = [np.average(mol[:,0]), np.average(mol[:,1]), np.average(mol[:,2])]
+    mol = translate(mol, -com[0], axis = 'x') 
+    mol = translate(mol, -com[1], axis = 'y')
+    mol = translate(mol, -com[2], axis = 'z')
     if axis == 'x':
         x = np.array([[1,0,0],
                       [0,np.cos(angle), -np.sin(angle)],
                       [0,np.sin(angle), np.cos(angle)]])
-        mol = np.array(mol)
         mol = mol[:,:]@x 
         mol = mol * angstrom
     elif axis == 'y':
         y = np.array([[np.cos(angle),0,np.sin(angle)],
                       [0,1,0],
                       [-np.sin(angle),0,np.cos(angle)]])
-        mol = np.array(mol)
         mol = mol[:,:]@y
         mol = mol * angstrom
     else:
         z = np.array([[np.cos(angle),-np.sin(angle),0],
                       [np.sin(angle),np.cos(angle),0],
                       [0,0,1]])
-        mol = np.array(mol)
         mol = mol[:,:]@z
         mol = mol * angstrom
 
-    mol = translate_mol(mol, centroid)
+    mol = translate(mol, com[0], axis = 'x') 
+    mol = translate(mol, com[1], axis = 'y')
+    mol = translate(mol, com[2], axis = 'z')
     return mol
 
-def check_overlap(pos, existing_molecules, boundaries):
-    boundaries = np.asarray(boundaries) * angstrom * 10  #need *10 to convert from nm to angstrom
-    for existing_pos in existing_molecules:
-        dx = pos[0] - existing_pos[0]
-        dy = pos[1] - existing_pos[1]
-        dz = pos[2] - existing_pos[2]
 
-        # account for periodic boundaries
-        dx -= np.round(dx / boundaries[0][0]) * boundaries[0][0] 
-        dy -= np.round(dy / boundaries[1][1]) * boundaries[1][1]
-        dz -= np.round(dz / boundaries[2][2]) * boundaries[2][2] 
-
-        if np.all(np.abs(dx) < 10) and np.all(np.abs(dy) < 10) and np.all(np.abs(dz) < 10):
-            # The new molecule is within 1 nm in all dimensions of an existing molecule
-            return True
-        
-    return False
-
-
-def load_test_mols(filenames, resnames):
+def load_test_mols(filename, resname):
     """Loads a molecule from file.
     Args
     ====
     filenames (list) - list of molecule sdf files
     """
     mols = {}
-    for filename, resname in zip(filenames, resnames):
-        mol = Molecule.from_file(f'./molecules/{filename}', file_format='sdf')
-        mol.generate_conformers()
-        conf = to_openmm(mol.conformers[0])
-        top = mol.to_topology().to_openmm()
-        top = md.Topology.from_openmm(top)
-        top.residue(0).name = resname
-        top = top.to_openmm()
-        mols[filename] = {
-            "mol":mol,
-            "topology": top,
-            "positions": conf,
-            'resname': resname
-        }
+
+    mol = Molecule.from_file(f'./molecules/{filename}', file_format='sdf')
+    mol.generate_conformers()
+    conf = to_openmm(mol.conformers[0])
+    top = mol.to_topology().to_openmm()
+    top = md.Topology.from_openmm(top)
+    top.residue(0).name = resname
+    top = top.to_openmm()
+    mols[filename] = {
+        "mol":mol,
+        "topology": top,
+        "positions": conf,
+        'resname': resname
+    }
 
     return mols
 
-def spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, sheet_x, sheet_y, config):
+def spawn_test_mols(test_mols, test_mol, model, sheet_x, sheet_y, target, end_z, config):
     test_mols_start = model.topology.getNumAtoms()
     existing_molecules = []
     boundaries = [
         Vec3(sheet_x - 0.5, 0, 0),
         Vec3(0, sheet_y - 0.5, 0),
-        Vec3(0, 0, 9.5)
+        Vec3(0, 0, end_z + 2.5)
     ]
 
-    for num in range(num_test_mols):
-        for mol_name in test_mol_names:
-            pos = test_mols[mol_name]['positions']
-            top = test_mols[mol_name]['topology']
+    pos = test_mols[test_mol]['positions']
+    top = test_mols[test_mol]['topology']
 
-            translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(boundaries[2][2])]) * nanometer
-            pos_temp = translate_mol(pos, translation)
-            pos_temp = rotate(pos_temp, np.deg2rad(np.random.randint(0, 360)), axis=np.random.choice(['x', 'y', 'z']))
+    translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), target]) * nanometer
+    pos += target * nanometer
+    pos = rotate(pos, np.deg2rad(np.random.randint(0, 360)), axis=np.random.choice(['x', 'y', 'z']))
 
-            while check_overlap(pos_temp, existing_molecules, boundaries):
-                translation = np.array([np.random.uniform(boundaries[0][0]), np.random.uniform(boundaries[1][1]), np.random.uniform(boundaries[2][2])]) * nanometer
-                pos_temp = translate_mol(pos, translation)
-                pos_temp = rotate(pos_temp, np.deg2rad(np.random.randint(0, 360)), axis=np.random.choice(['x', 'y', 'z']))
-
-            existing_molecules.append(pos_temp)
-            model.add(top, pos_temp)
+    model.add(top, pos)
 
     return [test_mols_start, model.topology.getNumAtoms()]
 
 def load_sheet_cell(cell_name, cell_res_names, config):
-    cell_name = config.get('Sheet Setup','crystal structure')
-    cell_res_names = config.get('Sheet Setup','crystal resnames').split(',')
+    cell_name = config.get('Umbrella Setup','crystal structure')
+    cell_res_names = config.get('Umbrella Setup','crystal resnames').split(',')
 
     mol = PDBFile(f'./molecules/{cell_name}')
 
-    cell_mols = config.get('Sheet Setup','mols in crystal').split(',')
+    cell_mols = config.get('Umbrella Setup','mols in crystal').split(',')
 
     gaff_mols = []
 
@@ -161,10 +131,10 @@ def load_sheet_cell(cell_name, cell_res_names, config):
     return mol, gaff_mols
 
 def make_sheet(mol, model, config):
-    sh = int(config.get('Sheet Setup','sheet height'))
-    sw = int(config.get('Sheet Setup','sheet width'))
-    res = config.get('Sheet Setup','crystal resnames').split(',')
-    cell_name = config.get('Sheet Setup','crystal structure')
+    sh = 1
+    sw = 1
+    res = config.get('Umbrella Setup','crystal resnames').split(',')
+    cell_name = config.get('Umbrella Setup','crystal structure')
 
     sheet_mols_start = model.topology.getNumAtoms()
 
@@ -197,7 +167,7 @@ def make_sheet(mol, model, config):
 
     return[sheet_mols_start, model.topology.getNumAtoms()], sheet_x_dim, sheet_y_dim
 
-def write_com(topology_list, successful_sims,target, ribose_type, config):
+def write_com(topology_list, successful_sims,target, test_mol, test_resname, config):
     outdir = config.get('Output Parameters','outdir')
 
     z_coordinates = []
@@ -205,52 +175,45 @@ def write_com(topology_list, successful_sims,target, ribose_type, config):
     top_index = 0
     for i in successful_sims:
 
-        try:
-            top = md.Topology.from_openmm(topology_list[top_index])
-            traj = md.load(f'traj_{i}_{ribose_type}.dcd', top=top)
+        top = md.Topology.from_openmm(topology_list[top_index])
+        traj = md.load(f'traj_{i}_{test_mol}.dcd', top=top)
 
-            res_indices = traj.topology.select(f'resname {ribose_type}')
-            
-            res_traj = traj.atom_slice(res_indices)
+        res_indices = traj.topology.select(f'resname {test_resname}')
 
-            com = md.compute_center_of_mass(res_traj)
+        res_traj = traj.atom_slice(res_indices)
 
-            z_coordinates.append(com[:, 2])
+        com = md.compute_center_of_mass(res_traj)
 
-            top_index += 1
-
-        except Exception as e:
-            print(f"Error loading trajectory traj_{i}_{ribose_type}.dcd:", e)
+        z_coordinates.append(com[:,2])
 
     if z_coordinates:
         z_coordinates = np.concatenate(z_coordinates)
-        np.savetxt(f'{outdir}/com_heights_{np.round(target, 3)}_{ribose_type}.csv', z_coordinates, fmt='%.5f', delimiter=',')
+        np.savetxt(f'{outdir}/com_heights_{np.round(target, 3)}_{test_mol}.csv', z_coordinates, fmt='%.5f', delimiter=',')
     else:
         print("No available simulations for this target height")
 
 
-def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
-    print(device_idx)
+def simulate(jobid, device_idx, target, end_z, replicate, test_mol, test_resname, config):
 
-    outdir  = config.get('Output Parameters','output directory')
-    report = int(config.get('Output Parameters','report interval'))
     nsteps = int(config.get('Simulation Setup','number steps'))
-    test_mol_names = config.get('Sheet Setup','test molecules').split(',')
-    test_resnames = config.get('Sheet Setup','test resnames').split(',')
-    num_test_mols = int(config.get('Sheet Setup','num of each mol'))
-    cell_name = config.get('Sheet Setup','crystal structure')
-    cell_res_names = config.get('Sheet Setup','crystal resnames')
+    report = int(config.get('Simulation Setup','report'))
+    restraint_force = int(config.get('Simulation Setup','restraining force'))
+    outdir = config.get('Output Parameters','outdir')
+    cell_name = config.get('Umbrella Setup','crystal structure')
+    cell_res_names = config.get('Umbrella Setup','crystal resnames').split(',')
 
-    test_mols = load_test_mols(test_mol_names, test_resnames)
+
+    test_mol_info = load_test_mols(test_mol, test_resname)
     unit_cell, cell_mols = load_sheet_cell(cell_name, cell_res_names, config)
 
     # initializing the modeler requires a topology and pos
     # we immediately empty the modeler for use later
-    model = Modeller(test_mols[test_mol_names[0]]['topology'],test_mols[test_mol_names[0]]['positions'])
+
+    model = Modeller(test_mol_info[test_mol]['topology'],test_mol_info[test_mol]['positions'])
     model.delete(model.topology.atoms())
 
     #generate residue template 
-    molecules = [test_mols[name]["mol"] for name in test_mols.keys()]
+    molecules = [test_mol_info[test_mol]["mol"]]
     molecules.extend(cell_mols)
 
     gaff = GAFFTemplateGenerator(molecules = molecules)
@@ -258,15 +221,16 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
     if(config.get('Output Parameters','verbose')=='True'):
         print("Building molecules:", jobid)
 
+
     #make the sheet (height, width, make sure to pass in the guanine and cytosine confomrers (g and c) and their topologies)
     sheet_indices = []
-    sheet_index, sheet_x, sheet_y= make_sheet(unit_cell, model, config)
+    sheet_index, sheet_x, sheet_y = make_sheet(unit_cell, model, config)
     sheet_indices.append(sheet_index)
     
-    test_mol_indices = []
-    test_mol_indices.append(spawn_test_mols(test_mol_names, test_mols, num_test_mols, model, sheet_x, sheet_y, config))
+    sugar_indices = []
+    sugar_indices.append(spawn_test_mols(test_mol_info, test_mol, model, sheet_x, sheet_y, target, end_z,config))
 
-    if(config.get('Output Parameters','verbose') == 'True'):
+    if(config.get('Output Parameters','verbose')=='True'):
         print("Building system:", jobid)
 
     forcefield = ForceField('amber14-all.xml', 'tip3p.xml')
@@ -278,7 +242,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
         Vec3(0,0,end_z + 2.5)
     ]
 
-    model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sheet_x, sheet_y, end_z + 2.5 ))
+    # model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sheet_x,sheet_y,end_z + 2.5 ))
     model.topology.setPeriodicBoxVectors(box_size)
 
     system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
@@ -299,7 +263,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
     custom_force = CustomExternalForce('0.5*j*((x-x)^2+(y-y)^2+(z-target)^2)')
     system.addForce(custom_force)
     custom_force.addGlobalParameter("target", target*nanometer)  
-    custom_force.addGlobalParameter("j", 5000*kilojoules_per_mole/nanometer**2) 
+    custom_force.addGlobalParameter("j", restraint_force*kilojoules_per_mole/nanometer**2) 
     custom_force.addPerParticleParameter('z0')
     custom_force.addPerParticleParameter('x0')
     custom_force.addPerParticleParameter('y0')
@@ -331,7 +295,7 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
     #need to store the topologies because every sim has a slighlty different number of waters
     model_top = model.getTopology()
 
-    file_handle = open(f"{outdir}/umbrella_traj_{replicate}_{ribose_type}.dcd", 'bw')
+    file_handle = open(f"{outdir}/traj_{replicate}_{test_mol}.dcd", 'bw')
     dcd_file = DCDFile(file_handle, model.topology, dt=stepsize)
     for step in range(0,nsteps, report):
         simulation.step(report)
@@ -342,16 +306,15 @@ def simulate(jobid, device_idx, target, end_z, replicate, ribose_type, config):
 
     return model_top
 
-def wham(ribose_type, config):
-    # https://fastmbar.readthedocs.io/en/latest/butane_PMF.html
+def wham(test_mol, config):
     outdir = config.get('Output Parameters','outdir')
     heights = []
     num_conf = []
 
-    target_list = np.loadtxt(f'{outdir}/heights_{ribose_type}.csv', delimiter=',')
+    target_list = np.loadtxt(f'{outdir}/heights_{test_mol}.csv', delimiter=',')
 
     for height_index in target_list:
-        height = np.loadtxt(f'{outdir}/com_heights_{np.round(height_index,3)}_{ribose_type}.csv', delimiter = ',')
+        height = np.loadtxt(f'{outdir}/com_heights_{np.round(height_index,3)}_{test_mol}.csv', delimiter = ',')
         heights.append(height)
         num_conf.append(len(height))
 
@@ -397,21 +360,23 @@ def wham(ribose_type, config):
 
 def main():
     config = get_config()
-    nsims = int(config.get('Simulation Parameters','number sims'))
-    nsteps = int(config.get('Simulation Parameters','number steps'))
-    report = int(config.get('Simulation Parameters','report'))
-    riboses = config.get('Input Setup','test resnames').split(',')
+    nsims = int(config.get('Simulation Setup','number sims'))
+    nsteps = int(config.get('Simulation Setup','number steps'))
+    report = int(config.get('Simulation Setup','report'))
 
-    gpus = int(config.get('Input Setup','number gpus'))
-    start_z = float(config.get('Input Setup','start z'))
-    end_z = float(config.get('Input Setup','end z'))
-    dz = float(config.get('Input Setup','dz'))
+    gpus = int(config.get('Umbrella Setup','number gpus'))
+    start_z = float(config.get('Umbrella Setup','start z'))
+    end_z = float(config.get('Umbrella Setup','end z'))
+    dz = float(config.get('Umbrella Setup','dz'))
+    test_mols = config.get('Umbrella Setup','test molecules').split(',')
+    test_resnames = config.get('Umbrella Setup','test resnames').split(',')
+
     jobs = 0
     target = start_z
 
     PMF = {}
 
-    for ribose_type in riboses:
+    for i, current_mol in enumerate(test_mols):
         target=start_z
         target_list = []
 
@@ -421,38 +386,39 @@ def main():
             successful_sims = []
 
             while replicate <= nsims:
-                print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {ribose_type}-ribose')
+                print(f'This is replicate {replicate} of target height {np.round(target,3)} nm for {current_mol}')
                 try:
-                    topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, ribose_type, config))
+                    topology_list.append(simulate(jobs, jobs%gpus, target, end_z, replicate, current_mol, test_resnames[i], config))
                     successful_sims.append(replicate)
                     target_list.append(target)
                 except KeyboardInterrupt:
                     print('Keyboard Interrupt')
                     return
-                except:
-                    print('Particle Coordinate is NaN')
+                except Exception as e:
+                    print(e)
                 replicate+=1
 
-            try:
-                write_com(topology_list, successful_sims, target, ribose_type, config)
-            except Exception as e:
-                print(e)
-                print('No available simulations for this target height')
+            # try:
+            write_com(topology_list, successful_sims, target, current_mol, test_resnames[i], config)
+            # except Exception as e:
+                # print(e)
+                # print('No available simulations for this target height')
 
             target += dz
         target_list = list(set(target_list))
-        np.savetxt(f'heights_{ribose_type}.csv',target_list)
+        np.savetxt(f'heights_{current_mol}.csv',target_list)
     
-        height_key = f'{ribose_type}_height_PMF'
-        calc_key = f'{ribose_type}_calc_PMF'
+        height_key = f'{current_mol}_height_PMF'
+        calc_key = f'{current_mol}_calc_PMF'
 
-        PMF[height_key], PMF[calc_key] = wham(ribose_type ,config)
+        PMF[height_key], PMF[calc_key] = wham(current_mol ,config)
     
     keys = list(PMF.keys())
+    print(keys)
     values = list(PMF.values())
 
     for i in range(0,len(keys),2):
-        plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][0]}-Ribose')
+        plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][0]}')
 
     plt.xlabel('height above sheet (nm)')
     plt.ylabel('PMF (kJ/mol)')

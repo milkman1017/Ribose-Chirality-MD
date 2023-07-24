@@ -324,7 +324,7 @@ def wham(test_mol, config):
     
     ##compute reduced energy matrix A
     A = np.zeros((len(target_list),N))
-    K = 5000
+    K = int(config.get('Simulation Setup','restraining force'))
     T = 300 * kelvin
     kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)
@@ -363,6 +363,7 @@ def main():
     nsims = int(config.get('Simulation Setup','number sims'))
     nsteps = int(config.get('Simulation Setup','number steps'))
     report = int(config.get('Simulation Setup','report'))
+    outdir = config.get('Output Parameters','outdir')
 
     gpus = int(config.get('Umbrella Setup','number gpus'))
     start_z = float(config.get('Umbrella Setup','start z'))
@@ -370,6 +371,7 @@ def main():
     dz = float(config.get('Umbrella Setup','dz'))
     test_mols = config.get('Umbrella Setup','test molecules').split(',')
     test_resnames = config.get('Umbrella Setup','test resnames').split(',')
+    cell = config.get("Umbrella Setup",'crystal structure')
 
     jobs = 0
     target = start_z
@@ -398,11 +400,11 @@ def main():
                     print(e)
                 replicate+=1
 
-            # try:
-            write_com(topology_list, successful_sims, target, current_mol, test_resnames[i], config)
-            # except Exception as e:
-                # print(e)
-                # print('No available simulations for this target height')
+            try:
+                write_com(topology_list, successful_sims, target, current_mol, test_resnames[i], config)
+            except Exception as e:
+                print(e)
+                print('No available simulations for this target height')
 
             target += dz
         target_list = list(set(target_list))
@@ -418,12 +420,12 @@ def main():
     values = list(PMF.values())
 
     for i in range(0,len(keys),2):
-        plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][0]}')
+        plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][:-15]}')
 
     plt.xlabel('height above sheet (nm)')
     plt.ylabel('PMF (kJ/mol)')
     plt.legend()
-    plt.show()
+    plt.savefig(f'{outdir}/Umbrella_graph_{test_resnames}_{cell[:-4]}.png',dpi=400)
 
 if __name__ == "__main__":
     main()

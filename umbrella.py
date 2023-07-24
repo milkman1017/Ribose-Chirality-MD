@@ -365,13 +365,16 @@ def main():
     report = int(config.get('Simulation Setup','report'))
     outdir = config.get('Output Parameters','outdir')
 
+
     gpus = int(config.get('Umbrella Setup','number gpus'))
     start_z = float(config.get('Umbrella Setup','start z'))
     end_z = float(config.get('Umbrella Setup','end z'))
     dz = float(config.get('Umbrella Setup','dz'))
     test_mols = config.get('Umbrella Setup','test molecules').split(',')
     test_resnames = config.get('Umbrella Setup','test resnames').split(',')
+
     cell = config.get("Umbrella Setup",'crystal structure')
+
 
     jobs = 0
     target = start_z
@@ -420,7 +423,9 @@ def main():
     values = list(PMF.values())
 
     for i in range(0,len(keys),2):
+
         plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][:-15]}')
+
 
     plt.xlabel('height above sheet (nm)')
     plt.ylabel('PMF (kJ/mol)')

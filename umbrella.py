@@ -176,7 +176,7 @@ def write_com(topology_list, successful_sims,target, test_mol, test_resname, con
     for i in successful_sims:
 
         top = md.Topology.from_openmm(topology_list[top_index])
-        traj = md.load(f'traj_{i}_{test_mol}.dcd', top=top)
+        traj = md.load(f'{outdir}/traj_{i}_{test_mol}.dcd', top=top)
 
         res_indices = traj.topology.select(f'resname {test_resname}')
 
@@ -191,7 +191,6 @@ def write_com(topology_list, successful_sims,target, test_mol, test_resname, con
         np.savetxt(f'{outdir}/com_heights_{np.round(target, 3)}_{test_mol}.csv', z_coordinates, fmt='%.5f', delimiter=',')
     else:
         print("No available simulations for this target height")
-
 
 def simulate(jobid, device_idx, target, end_z, replicate, test_mol, test_resname, config):
 
@@ -242,8 +241,8 @@ def simulate(jobid, device_idx, target, end_z, replicate, test_mol, test_resname
         Vec3(0,0,end_z + 2.5)
     ]
 
-    # model.addSolvent(forcefield=forcefield, model='tip3p', boxSize=Vec3(sheet_x,sheet_y,end_z + 2.5 ))
-    model.topology.setPeriodicBoxVectors(box_size)
+    model.addSolvent(forcefield=forcefield, model='tip3p', padding = 0.1*nanometer)
+    # model.topology.setPeriodicBoxVectors(box_size)
 
     system = forcefield.createSystem(model.topology, nonbondedMethod=PME, nonbondedCutoff=0.5*nanometer, constraints=HBonds)
 
@@ -286,7 +285,31 @@ def simulate(jobid, device_idx, target, end_z, replicate, test_mol, test_resname
 
     simulation.minimizeEnergy()
 
-    PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
+    #NPT equilibration (https://github.com/openmm/openmm/issues/3782)
+    equilibration_steps = 50000
+    barostat = system.addForce(MonteCarloBarostat(1*atmosphere, 300*kelvin))
+    simulation.context.reinitialize(True)
+    print('Running NPT equil')
+    for i in range(100):
+        print('equil step, ', i)
+        simulation.step(int(equilibration_steps/100))
+
+    #save the equilibration results
+    simulation.saveState((f'{outdir}/equilibrium.state'))
+    simulation.saveCheckpoint((f'{outdir}/equilibrium.chk'))
+    
+    #load checkpoint and reset step and time counters
+    simulation.loadCheckpoint((f'{outdir}/equilibrium.chk'))
+    eq_state = simulation.context.getState(getVelocities=True, getPositions=True)
+    positions = eq_state.getPositions()
+    velocities = eq_state.getVelocities()
+
+    integrator = LangevinIntegrator(300*kelvin, 1/picosecond, stepsize)
+    simulation = Simulation(model.topology, system, integrator)
+    simulation.context.setPositions(positions)
+    simulation.context.setVelocities(velocities)
+
+    PDBFile.writeFile(simulation.topology, simulation.context.getState(getPositions=True).getPositions(), open(f"eq_umbrella_first_frame_{np.round(target,3)}.pdb", 'w'))
     # simulation.reporters.append(PDBReporter(f'umbrella_{np.round(target,3)}.pdb', report))
 
     simulation.reporters.append(StateDataReporter(stdout, report, step=True,
@@ -353,7 +376,8 @@ def wham(test_mol, config):
             ((heights - (height_high - height_low) > height_low) & (heights - (height_high - height_low) <= height_high))
 
         B[i,~indicator] = np.inf
-    calc_PMF, _ = fastmbar.calculate_free_energies_of_perturbed_states(B)
+
+    calc_PMF = fastmbar.calculate_free_energies_of_perturbed_states(B)
     height_PMF -= 0.1
 
     return height_PMF, calc_PMF
@@ -411,7 +435,7 @@ def main():
 
             target += dz
         target_list = list(set(target_list))
-        np.savetxt(f'heights_{current_mol}.csv',target_list)
+        np.savetxt(f'{outdir}/heights_{current_mol}.csv',target_list)
     
         height_key = f'{current_mol}_height_PMF'
         calc_key = f'{current_mol}_calc_PMF'
@@ -419,7 +443,6 @@ def main():
         PMF[height_key], PMF[calc_key] = wham(current_mol ,config)
     
     keys = list(PMF.keys())
-    print(keys)
     values = list(PMF.values())
 
     for i in range(0,len(keys),2):

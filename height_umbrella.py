@@ -349,7 +349,7 @@ def wham(test_mol, config):
     A = np.zeros((len(target_list),N))
     K = int(config.get('Simulation Setup','restraining force'))
     T = 300 * kelvin
-    kbT = BOLTZMANN_CONSTANT_kB * 298.15 * kelvin * AVOGADRO_CONSTANT_NA
+    kbT = BOLTZMANN_CONSTANT_kB * T * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)
 
     for height_index in range(len(target_list)):
@@ -388,7 +388,6 @@ def main():
     nsteps = int(config.get('Simulation Setup','number steps'))
     report = int(config.get('Simulation Setup','report'))
     outdir = config.get('Output Parameters','outdir')
-
 
     gpus = int(config.get('Umbrella Setup','number gpus'))
     start_z = float(config.get('Umbrella Setup','start z'))
@@ -448,7 +447,6 @@ def main():
     for i in range(0,len(keys),2):
 
         plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][:-15]}')
-
 
     plt.xlabel('height above sheet (nm)')
     plt.ylabel('PMF (kJ/mol)')

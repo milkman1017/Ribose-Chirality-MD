@@ -264,7 +264,7 @@ def simulate(jobid, device_idx, theta0, replicate, test_mol, test_resname, confi
     barostat = system.addForce(MonteCarloBarostat(1*atmosphere, 300*kelvin))
     simulation.context.reinitialize(True)
     print('Running NPT equil')
-    for i in range(1):
+    for i in range(10):
         print('equil step, ', i)
         simulation.step(int(equilibration_steps/100))
 
@@ -304,35 +304,39 @@ def simulate(jobid, device_idx, theta0, replicate, test_mol, test_resname, confi
 
     return model_top
 
-def collect_torsions(topology_list, theta0, current_mol, current_resname, config):
+def collect_torsions(topology_list, successful_sims, theta0, current_mol, current_resname, config):
     outdir = config.get('Output Parameters','outdir')
     nsims = int(config.get('Simulation Setup','number sims'))
 
     torsion_atoms_idx = [17,10,1,13]
     torsions = []
 
-    for i in range(1, (nsims+1)):
-        top_index = i - 1
+    top_index = 0
+    for i in successful_sims:
 
         top = md.Topology.from_openmm(topology_list[top_index])
         traj = md.load(f'{outdir}/traj_{i}_{current_mol}.dcd', top=top)
 
         theta = md.compute_dihedrals(traj, [torsion_atoms_idx])
         torsions.append(theta.flatten().tolist())
+        top_index += 1
 
     torsions = [torsion for torsions_list in torsions for torsion in torsions_list]
-    
-    np.savetxt(f'{outdir}/dihedral_{np.round(theta0,4)}_mol_{current_resname}.csv', torsions, fmt='%.5f', delimiter=',')
+    if torsions:
+        np.savetxt(f'{outdir}/dihedral_{np.round(theta0,4)}_mol_{current_resname}.csv', torsions, fmt='%.5f', delimiter=',')
+    else:
+        print('No available simulations for this target')
 
 def wham(test_mol, current_mol, current_resname, config):
-    M = int(config.get('Umbrella Setup','centers'))
-    centers = np.loadtxt(f'theta0.csv', delimiter=',')
+    outdir = config.get('Output Parameters','outdir')
 
+    centers = np.loadtxt(f'{outdir}/theta0_{current_mol}.csv', delimiter=',')
+    M = len(centers)
+    
     thetas = []
     num_conf = []
 
-    for theta0_index in range(M):
-        theta0 = centers[theta0_index]
+    for theta0 in centers:
         theta = np.loadtxt(f'dihedral_{np.round(theta0,4)}_mol_{current_resname}.csv', delimiter=',')
         thetas.append(theta)
         num_conf.append(len(theta))
@@ -347,11 +351,10 @@ def wham(test_mol, current_mol, current_resname, config):
     kbT = BOLTZMANN_CONSTANT_kB * T * AVOGADRO_CONSTANT_NA
     kbT = kbT.value_in_unit(kilojoule_per_mole)
 
-    for theta0_index in range(M):
-        current_theta0 = centers[theta0_index]
-        diff = np.abs(thetas-current_theta0)
+    for i, theta0 in enumerate(centers):
+        diff = np.abs(thetas-theta0)
         diff = np.minimum(diff, 2*np.pi-diff)
-        A[theta0_index, :] = 0.5*K*diff**2/kbT
+        A[i, :] = 0.5*K*diff**2/kbT
     
     fastmbar = FastMBAR(energy = A, num_conf = num_conf, cuda=False, verbose=True)
     print('relative free energies: ', fastmbar.F)
@@ -390,7 +393,6 @@ def main():
 
     M = int(config.get('Umbrella Setup','centers')) #M centers of harmonic biasing potentials
     theta0 = np.linspace(-np.pi, np.pi, M, endpoint=False)
-    np.savetxt(f'{outdir}/theta0.csv', theta0, delimiter=',')
 
     cell = config.get("Umbrella Setup",'crystal structure')
 
@@ -399,19 +401,35 @@ def main():
     PMF = {}
 
     for i, current_mol in enumerate(test_mols):
+        target_list = []
+
         #set up torsion umbrella sampling (https://fastmbar.readthedocs.io/en/latest/butane_PMF.html)
         for theta0_index in range(M):
             replicate = 1
             topology_list = []
+            successful_sims = []
 
             while replicate <= nsims:
                 print(f'Sampling replicate {replicate} for theta {theta0_index} out of {M} for mol {current_mol}')
-                topology_list.append(simulate(jobs, jobs%gpus, theta0[theta0_index], replicate, current_mol, test_resnames[i], config))
-
+                try:
+                    topology_list.append(simulate(jobs, jobs%gpus, theta0[theta0_index], replicate, current_mol, test_resnames[i], config))
+                    successful_sims.append(replicate)
+                    target_list.append(theta0[theta0_index])
+                except KeyboardInterrupt:
+                    print('Keyboard Interrupt')
+                    return
+                except Exception as e:
+                    print(e)
                 replicate += 1
+            try:
+                collect_torsions(topology_list, successful_sims, theta0[theta0_index], current_mol, test_resnames[i], config)
+            except Exception as e:
+                print(e)
+                print('No available sims for this target')
 
-            collect_torsions(topology_list, theta0[theta0_index], current_mol, test_resnames[i], config)
-    
+        theta0_list = list(set(target_list))
+        np.savetxt(f'{outdir}/theta0_{current_mol}.csv', theta0_list, delimiter=',')
+
         height_key = f'{current_mol}_height_PMF'
         calc_key = f'{current_mol}_calc_PMF'
 
@@ -424,10 +442,11 @@ def main():
 
         plt.plot(values[i],values[i+1], linewidth=1, label=f'{keys[i][:-15]}')
 
-    plt.xlabel('height above sheet (nm)')
+    plt.xlabel('Angle of Torsion (rads)')
     plt.ylabel('PMF (kJ/mol)')
     plt.legend()
-    # plt.savefig(f'{outdir}/Umbrella_graph_{test_resnames}_{cell[:-4]}.png',dpi=400)
-    plt.show
+    plt.savefig(f'{outdir}/Umbrella_graph_{test_resnames}_{cell[:-4]}.png',dpi=400)
+    # plt.show()
+
 if __name__ == "__main__":
     main()
